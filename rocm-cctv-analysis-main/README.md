@@ -62,6 +62,73 @@ Open **http://\<host\>:8080** — the only port. First build compiles the RT-DET
 MIGraphX cache (~9 min once). That's it — every container is rebuilt from this
 repo, so you never need anyone else's images.
 
+## CPU/public-test deployment and uploaded-video investigation
+
+The repository also includes a CPU-only stack for laptops without a ROCm-capable
+GPU. This is the supported local configuration used for development and
+recorded-video testing on Windows:
+
+```powershell
+docker compose -f docker-compose.public-test.yml up -d --build
+```
+
+Open <http://localhost:8080>. The public-test stack uses SQLite under
+`output/public-test.db`, serves the web application through Caddy, and mounts
+the local `ai/models` directory into the bridge for CPU video analysis. The
+bridge upload limit and proxy request-body limit are both 512 MB. Do not place
+credentials or model weights in Git.
+
+The local workflow is:
+
+1. Open **Camera Sources** (`/sources.html`) and upload a playable MP4.
+2. Confirm the file appears under **Uploaded Recordings**.
+3. Start analysis and wait for the persisted status to become **Analysis
+   completed** or **Analysis failed**.
+4. Open **Playback** (`/playback.html`) to play the actual uploaded file.
+5. Open **Investigator** (`/`) or the recording's **Investigate** link to ask
+   questions about that recording's persisted detections.
+6. Use timestamp evidence links to seek the selected recording where supported.
+
+Uploaded recordings remain distinct from live RTSP cameras. The application
+does not pretend an uploaded file is a live stream, and the CPU detector stores
+an unknown tracking ID when persistent tracking has not been produced.
+
+### Uploaded-recording API
+
+The recording workflow is served by the bridge and routed through the proxy:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/uploads` | Upload a video and required recording metadata |
+| `GET` | `/api/uploads` | List server-persisted recordings and processing status |
+| `GET` | `/api/uploads/{id}/file` | Stream the saved video with range support |
+| `POST` | `/api/uploads/{id}/analyze` | Queue asynchronous CPU analysis |
+| `GET` | `/api/uploads/{id}/analysis` | Read processing status, progress, and errors |
+| `GET` | `/api/uploads/{id}/detections` | Read timestamped persisted detections |
+| `GET` | `/api/uploads/{id}/investigation` | Read recording-scoped chat history |
+| `POST` | `/api/uploads/{id}/investigation` | Ask an evidence-grounded question |
+| `GET` | `/api/uploads/{id}/tracking` | Read recorded observations and tracking limitations |
+
+The first investigation implementation is deliberately API-key-free and
+deterministic: it answers from persisted detector observations and timestamps.
+It does not claim full video understanding and reports when the available
+evidence cannot establish identity, routes, colors, room semantics, or
+unobserved actions.
+
+### Local verification
+
+From the repository root, the following checks validate the frontend and
+running public-test service without rebuilding containers:
+
+```powershell
+node --check .\webapp\js\app.js
+node --check .\webapp\js\agent.js
+python -m py_compile .\bridge\bridge.py .\bridge\sqlite_store.py .\bridge\video_analysis.py
+git diff --check
+Invoke-WebRequest http://localhost:8080/api/health
+Invoke-WebRequest http://localhost:8080/api/uploads
+```
+
 ## The AI services (all on the MI300X)
 
 | Service | What it does | How it runs |
