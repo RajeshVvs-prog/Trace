@@ -57,6 +57,28 @@
   </div>
 </nav>
 
+<section class="home-overview" aria-labelledby="home-overview-title">
+  <div class="home-overview__intro">
+    <p class="eyebrow">CCTV intelligence workspace</p>
+    <h2 id="home-overview-title">Monitor live feeds and investigate recorded evidence.</h2>
+    <p>Use the live grid for current activity, or open an uploaded recording to review its analysis and timestamps.</p>
+    <div class="home-overview__actions">
+      <a class="home-action home-action--primary" href="/sources.html">Add a recording</a>
+      <a class="home-action" href="/">Open Investigator</a>
+      <a class="home-action" href="/playback.html">Open Playback</a>
+    </div>
+  </div>
+  <div class="home-overview__recordings">
+    <div class="home-section-head">
+      <div><p class="eyebrow">Server-backed evidence</p><h3>Recent recordings</h3></div>
+      <a href="/sources.html">View all</a>
+    </div>
+    <div id="home-recordings" class="home-recordings" aria-live="polite">
+      <p class="home-state">Loading recordings…</p>
+    </div>
+  </div>
+</section>
+
 <main class="grid" id="camera-grid"></main>
 
 <div class="picker" id="cam-picker" hidden>

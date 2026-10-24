@@ -90,6 +90,50 @@ body {
 .meta-block--clock { text-align: right; }
 .meta-block--clock .meta-block__value { justify-content: flex-end; }
 
+/* ---- homepage overview --------------------------------------- */
+.home-overview {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(420px, 1.35fr);
+  gap: 24px;
+  padding: 28px 20px 22px;
+  background: linear-gradient(135deg, var(--surface) 0%, var(--bg) 72%);
+  border-bottom: 1px solid var(--border);
+}
+.home-overview__intro { max-width: 640px; }
+.eyebrow {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.home-overview h2 { margin: 8px 0 10px; font-size: clamp(24px, 3vw, 38px); line-height: 1.08; }
+.home-overview__intro > p:not(.eyebrow) { max-width: 560px; color: var(--text-muted); line-height: 1.55; }
+.home-overview__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.home-action {
+  display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px;
+  border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg);
+  color: var(--text); font-size: 12px; font-weight: 700; text-decoration: none;
+}
+.home-action:hover { border-color: var(--accent); color: var(--accent); }
+.home-action--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.home-action--primary:hover { color: #fff; filter: brightness(1.08); }
+.home-overview__recordings { min-width: 0; }
+.home-section-head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.home-section-head h3 { margin-top: 4px; font-size: 18px; }
+.home-section-head a { color: var(--accent); font-size: 12px; font-weight: 700; }
+.home-recordings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.home-recording {
+  min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: 9px;
+  background: var(--bg); box-shadow: 0 2px 7px rgba(16,24,40,.05);
+}
+.home-recording h4 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.home-recording p { min-height: 34px; margin: 6px 0 10px; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.home-recording__actions { display: flex; gap: 12px; }
+.home-recording__actions a { color: var(--accent); font-size: 11px; font-weight: 700; text-decoration: none; }
+.home-state { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.home-state--error { color: var(--err); }
+
 /* status LED */
 .led {
   width: 8px;
@@ -284,7 +328,9 @@ body {
 
 @media (max-width: 1200px) { .grid[data-cols="auto"] { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 900px)  { .grid[data-cols="auto"] { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px)  { .grid[data-cols="auto"] { grid-template-columns: 1fr; } }
+@media (max-width: 560px)  {
+  .home-overview { grid-template-columns: 1fr; padding: 22px 14px 18px; gap: 20px; }
+  .home-recordings { grid-template-columns: 1fr; } .grid[data-cols="auto"] { grid-template-columns: 1fr; } }
 
 /* ---- camera tile -------------------------------------------- */
 

@@ -93,7 +93,7 @@ body:has(.inv) .topbar { flex: none; }
 .inv-ctx svg { display: block; }
 .inv-ctx__track { fill: none; stroke: rgba(0,0,0,.12); stroke-width: 3.5; }
 .inv-ctx__fill {
-  fill: none; stroke: #111; stroke-width: 3.5; stroke-linecap: round;
+  fill: none; stroke: var(--accent); stroke-width: 3.5; stroke-linecap: round;
   stroke-dasharray: 94.25; stroke-dashoffset: 94.25;
   transition: stroke-dashoffset .5s ease, stroke .3s ease;
 }
@@ -285,7 +285,8 @@ body:has(.inv) .topbar { flex: none; }
 
 /* ---- journey clip jump dropdown ---- */
 .ev-video-jump { width: 100%; padding: 6px 8px; margin-bottom: 4px;
-  border: 1px solid #d3d7dc; background: #fff; font-size: 12px; }
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
+  font-size: 12px; }
 
 /* ---- verifier badge on assistant bubbles ---- */
 .vbadge { display: inline-block; margin-left: 8px; padding: 0 6px;
@@ -300,6 +301,39 @@ body:has(.inv) .topbar { flex: none; }
   margin: auto 12px 0; padding: 8px 12px 9px;
   display: flex; flex-direction: column; gap: 8px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
+}
+
+/* Readable, compact conversation treatment. Keep these colors on theme tokens
+ * so messages remain legible if the application theme is changed. */
+.inv-thread { padding-top: 18px; padding-bottom: 24px; }
+.msg { width: min(88%, 780px); margin: 10px 0 16px; flex-wrap: wrap; gap: 5px 10px; }
+.msg--user { margin-left: auto; }
+.msg__body { max-width: 100%; padding: 12px 16px; line-height: 1.5; }
+.msg--user .msg__body { background: #0b5fd9; color: #fff; box-shadow: 0 2px 6px rgba(11,95,217,.18); }
+.msg--assistant .msg__body { background: var(--surface); color: var(--text);
+  border-color: var(--border-strong); box-shadow: 0 2px 5px rgba(16,24,40,.06); }
+.msg__time { width: 100%; color: var(--text-muted); font-size: 11px; }
+.msg--user .msg__time { text-align: right; }
+.msg--thinking .msg__body { color: var(--text-muted); background: var(--surface-2); }
+.msg-choices { margin: 0 0 14px 8px; }
+.msg-choice, .ev-event__play, .ev-person__more, .ev-event__more {
+  min-height: 34px; font-weight: 600;
+}
+.ev-event__play { border: 1px solid #084aa9; background: #0b5fd9; color: #fff; }
+.ev-event__play:focus-visible, .ev-person__more:focus-visible, .ev-event__more:focus-visible,
+.ev-tab:focus-visible, .ev-video-jump:focus-visible { outline: 3px solid rgba(11,95,217,.3); outline-offset: 2px; }
+.ev-person__more, .ev-event__more { background: var(--surface-2); color: var(--accent); }
+.ev-person__more:hover, .ev-event__more:hover { background: var(--accent); color: #fff; }
+.ev-event__meta, .ev-snap__meta { color: var(--text-muted); }
+.inv-evidence__body { padding: 14px; }
+
+@media (max-width: 900px) {
+  body:has(.inv) { overflow: auto; }
+  .inv { min-height: calc(100vh - 64px); }
+  .inv-thread { padding: 16px 12px 20px; }
+  .msg { width: min(94%, 780px); }
+  .inv-compose { position: sticky; bottom: 0; padding: 10px 12px 12px; }
+  .inv-window { display: none; }
 }
 .inv-model label { display: flex; flex-direction: column; gap: 4px; }
 .inv-model__label {

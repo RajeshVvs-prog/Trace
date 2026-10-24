@@ -91,6 +91,60 @@ const grid = document.getElementById("camera-grid");
 const viewTabs = document.getElementById("view-tabs");
 const statusText = document.getElementById("status-text");
 
+function recordingStatus(r) {
+  const status = r.processing_status || r.status || "uploaded";
+  return {
+    uploaded: "Uploaded — not analyzed",
+    queued: "Queued for analysis",
+    processing: `Processing ${Math.round(Number(r.processing_progress || 0))}%`,
+    completed: `Analysis completed · ${Number(r.detection_count || 0)} detections`,
+    failed: `Analysis failed${r.error ? `: ${r.error}` : ""}`,
+  }[status] || status;
+}
+
+async function loadHomeRecordings() {
+  const box = document.getElementById("home-recordings");
+  if (!box) return;
+  try {
+    const response = await fetch("/api/uploads");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const rows = Array.isArray(payload) ? payload : (payload.recordings || []);
+    box.innerHTML = "";
+    if (!rows.length) {
+      box.innerHTML = `<p class="home-state">No uploaded recordings yet. Add a source to begin building evidence.</p>`;
+      return;
+    }
+    rows.slice(0, 4).forEach((r) => {
+      const card = document.createElement("article");
+      card.className = "home-recording";
+      const title = document.createElement("h4");
+      title.textContent = r.filename || r.original_filename || r.original_name || "Untitled recording";
+      const meta = document.createElement("p");
+      meta.textContent = [r.camera_name || r.camera_id, recordingStatus(r)].filter(Boolean).join(" · ");
+      const actions = document.createElement("div");
+      actions.className = "home-recording__actions";
+      const investigate = document.createElement("a");
+      investigate.href = r.id || r.recording_id
+        ? `/investigation.html?id=${encodeURIComponent(r.id || r.recording_id)}`
+        : "/investigation.html";
+      investigate.textContent = "Investigate";
+      const playback = document.createElement("a");
+      playback.href = "/playback.html";
+      playback.textContent = "Playback";
+      actions.append(investigate, playback);
+      card.append(title, meta, actions);
+      box.appendChild(card);
+    });
+  } catch (error) {
+    box.innerHTML = "";
+    const state = document.createElement("p");
+    state.className = "home-state home-state--error";
+    state.textContent = `Recordings unavailable: ${error.message}`;
+    box.appendChild(state);
+  }
+}
+
 const camKey = (nvrId, ch) => `${nvrId}_ch${String(ch).padStart(2, "0")}`;
 
 /* ---- boot ------------------------------------------------------ */
@@ -127,6 +181,7 @@ async function init() {
   loadViewer();
   startIdentityFeed();       // names and plates, polled and cached
   setInterval(sweepStale, 500);
+  loadHomeRecordings();
 }
 
 /* ---- header widgets -------------------------------------------- */
