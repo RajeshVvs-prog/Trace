@@ -8,7 +8,7 @@ const LINK_GROUPS = [
     ["/dashboard.html", "Dashboard"],
   ]],
   ["Investigate", [
-    ["/", "Investigator"],
+    ["/", "TRACE"],
     ["/playback.html", "Playback"],
     ["/people.html", "Tracking"],
   ]],

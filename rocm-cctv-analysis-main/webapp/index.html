@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Investigator</title>
+<title>TRACE</title>
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/agent.css">
 <link rel="icon" type="image/png" href="assets/logo.png">
@@ -14,7 +14,7 @@
   <div class="topbar__brand">
     <img class="topbar__mark" src="assets/logo.png" alt="" width="32" height="32">
     <div>
-      <h1 class="topbar__title">Investigator</h1>
+      <h1 class="topbar__title">TRACE</h1>
       <span class="topbar__sub">Ask what happened. Every answer is built from what the cameras already recorded.</span>
     </div>
   </div>
@@ -22,18 +22,20 @@
 </header>
 
 <main class="inv">
-  <section class="inv-recording" aria-label="Uploaded recording investigation">
-    <label>
-      <span>Uploaded recording</span>
-      <select id="recording-investigation">
-        <option value="">Investigate live-camera data</option>
-      </select>
-    </label>
-    <span id="recording-investigation-status">Select an analyzed upload to scope this investigation.</span>
-    <a id="recording-investigation-playback" href="playback.html" hidden>Open in Playback</a>
-  </section>
   <!-- sessions -->
   <aside class="inv-rail" id="rail">
+    <button class="inv-rail__title" id="sidebar-toggle" type="button"
+            aria-expanded="true">Data &amp; Evidence <span aria-hidden="true">‹</span></button>
+    <section class="inv-recording" aria-label="Uploaded recording investigation">
+      <label>
+        <span>Uploaded recording</span>
+        <select id="recording-investigation">
+          <option value="">Live-camera data</option>
+        </select>
+      </label>
+      <span id="recording-investigation-status">Choose an analyzed upload to scope this chat.</span>
+      <a id="recording-investigation-playback" href="playback.html" hidden>Open in Playback</a>
+    </section>
     <button class="inv-new" id="new-chat">＋ New chat</button>
     <div class="inv-sessions" id="sessions"></div>
     <!-- model + tools: the bottom-left corner cluster, filled from /agent/meta -->
@@ -57,6 +59,17 @@
       <span class="inv-tools-fab__icon">🧰</span> Tools &amp; abilities
     </button>
     <div class="inv-tools-panel" id="tools-panel" hidden></div>
+    <section class="inv-evidence">
+    <div class="inv-evidence__head">
+      <span>Evidence</span>
+      <span class="inv-evidence__tools">
+        <button class="inv-evidence__reset on" id="boxes-toggle" title="Detection boxes on live cameras">boxes</button>
+        <button class="inv-evidence__reset" id="evidence-reset" title="Back to live cameras">live</button>
+      </span>
+    </div>
+    <div class="inv-evidence__tabs" id="ev-tabs"></div>
+    <div class="inv-evidence__body" id="evidence"></div>
+    </section>
   </aside>
 
   <!-- conversation -->
@@ -76,7 +89,7 @@
     <form class="inv-compose" id="compose">
       <input type="file" id="img-input" accept="image/*" hidden>
       <button type="button" id="img-btn" title="Upload an image">📎</button>
-      <textarea id="input" rows="1" placeholder="Describe what you heard, ask who did something, or drop an image…"></textarea>
+      <textarea id="input" rows="1" placeholder="Ask TRACE about the recorded evidence…"></textarea>
       <button type="button" id="ctx-ring" class="inv-ctx" title="Conversation memory — click to summarise the earlier messages" hidden>
         <svg viewBox="0 0 36 36" width="24" height="24" aria-hidden="true">
           <circle class="inv-ctx__track" cx="18" cy="18" r="15"></circle>
@@ -86,19 +99,6 @@
       </button>
       <button type="submit" id="send" title="Send">➤</button>
     </form>
-  </section>
-
-  <!-- evidence -->
-  <section class="inv-evidence">
-    <div class="inv-evidence__head">
-      <span>Evidence</span>
-      <span class="inv-evidence__tools">
-        <button class="inv-evidence__reset on" id="boxes-toggle" title="Detection boxes on live cameras">boxes</button>
-        <button class="inv-evidence__reset" id="evidence-reset" title="Back to live cameras">live</button>
-      </span>
-    </div>
-    <div class="inv-evidence__tabs" id="ev-tabs"></div>
-    <div class="inv-evidence__body" id="evidence"></div>
   </section>
 </main>
 

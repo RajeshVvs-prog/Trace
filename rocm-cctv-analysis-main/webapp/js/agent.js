@@ -36,6 +36,13 @@ const state = { conv: null, cameras: [], busy: false, showBoxes: true,
   evidence: [], evView: "cameras" };
 const el = (id) => document.getElementById(id);
 
+const sidebarToggle = el("sidebar-toggle");
+sidebarToggle?.addEventListener("click", () => {
+  const rail = el("rail");
+  const collapsed = rail.classList.toggle("is-collapsed");
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+});
+
 /* ---- detection overlay: the same boxes the CCTV page draws, over each live
  * evidence tile. Fed by the bridge WebSocket, keyed by camera. Drawing this on
  * the live evidence is the standard the owner asked for. */
