@@ -218,32 +218,36 @@
 }
 
 .investigation__video video {
-display: block;
-width: 100%;
-max-height: 58vh;
-background: #0a0d10;
+  display: block;
+  width: 100%;
+  max-height: 58vh;
+  background: var(--video-bg);
 }
 
 .investigation__chat {
-padding: 1.25rem;
+  padding: 1.25rem;
 }
 
 .investigation__messages {
-display: grid;
-gap: .75rem;
-margin-bottom: 1rem;
+  display: grid;
+  gap: .75rem;
+  margin-bottom: 1rem;
 }
 
 .investigation__message {
-max-width: 82%;
-padding: .8rem 1rem;
-border: 1px solid var(--line, #293139);
-background: #11171b;
+  max-width: 82%;
+  padding: .8rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  line-height: 1.5;
 }
 
 .investigation__message--user {
-justify-self: end;
-background: #17251f;
+  justify-self: end;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
 .investigation__message p {
@@ -252,25 +256,47 @@ white-space: pre-wrap;
 }
 
 .investigation__evidence {
-display: block;
-margin-top: .6rem;
-padding: .35rem .5rem;
-border: 1px solid #536b5b;
-color: inherit;
-background: transparent;
-cursor: pointer;
-font: inherit;
-text-align: left;
+  display: block;
+  width: 100%;
+  margin-top: .6rem;
+  padding: .5rem .65rem;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--bg);
+  cursor: pointer;
+  font: 600 11px var(--sans);
+  text-align: left;
+}
+.investigation__evidence:hover,
+.investigation__evidence:focus-visible {
+  color: #fff;
+  background: var(--accent);
 }
 
 .investigation__form {
-display: grid;
-gap: .75rem;
+  display: grid;
+  gap: .75rem;
 }
 
 .investigation__note {
-color: var(--muted, #95a0a6);
-font-size: .85rem; }
+  color: var(--text-muted);
+  font-size: .85rem;
+  line-height: 1.5;
+}
+
+.investigation__chat .form-field > span {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.investigation__chat .btn-save {
+  justify-self: start;
+}
+
+@media (max-width: 720px) {
+  .investigation__message { max-width: 96%; }
+}
 .upload-item__status--error { color: var(--err) !important; }
 .upload-item__status--success { color: var(--ok, #25855a) !important; }
 .upload-item__progress {
