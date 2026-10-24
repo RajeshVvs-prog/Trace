@@ -1,0 +1,40 @@
+services:
+  bridge:
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile.cpu
+    container_name: ccvt-bridge-cpu
+    restart: unless-stopped
+    environment:
+      BRIDGE_PORT: "8081"
+      BRIDGE_OUTPUT: /output
+      REPO_DIR: /repo
+      WEBAPP_DIR: /repo/webapp
+      CCVT_STORAGE: sqlite
+      CCVT_SQLITE_PATH: /output/ccvt.db
+      CCVT_LIVE_STREAMS: "0"
+    ports:
+      - "8080:8081"
+    volumes:
+      - ./output:/output
+      - ./webapp:/repo/webapp:ro
+      - ./config.example.yaml:/repo/config.example.yaml:ro
+      - ./recordings:/recordings:ro
+    command: ["python", "bridge.py"]
+
+  detector:
+    profiles: ["detector"]
+    build:
+      context: ./ai_rocm
+      dockerfile: Dockerfile.cpu
+    container_name: ccvt-detector-cpu
+    depends_on:
+      - bridge
+    environment:
+      INFERENCE_BACKEND: cpu
+      RTDETR_ONNX: /models/rtdetr_r50_uint8.onnx
+      BRIDGE_URL: http://bridge:8081/ingest
+    volumes:
+      - ./ai/models:/models:ro
+      - ./video:/video:ro
+    command: ["--video", "/video/input.mp4", "--fps", "2"]

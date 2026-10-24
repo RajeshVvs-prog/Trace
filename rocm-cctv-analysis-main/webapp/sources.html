@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera Sources · CCTV Monitoring</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/sources.css">
+<link rel="icon" type="image/png" href="assets/logo.png">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar__brand">
+    <img class="topbar__mark" src="assets/logo.png" alt="" width="32" height="32">
+    <div>
+      <h1 class="topbar__title">Camera Sources</h1>
+      <span class="topbar__sub">Upload recordings or connect live CCTV feeds.</span>
+    </div>
+  </div>
+  <div class="topbar__meta"></div>
+</header>
+
+<main class="sources">
+  <section class="sources__intro">
+    <p class="eyebrow">Source management</p>
+    <h2>Bring your authorized footage into the investigation workspace.</h2>
+    <p class="sources__intro-copy">
+      Add recorded videos for later processing or register a live camera feed.
+      Uploaded recordings are saved and their processing status is shown below.
+    </p>
+  </section>
+
+  <section class="source-card" aria-labelledby="upload-title">
+    <header class="source-card__head">
+      <div>
+        <h2 id="upload-title">Upload videos</h2>
+        <p>Select one or more recordings and describe where and when they were captured.</p>
+      </div>
+      <span class="badge badge--ready">Ready</span>
+    </header>
+
+    <div class="source-card__body">
+      <div class="upload-picker">
+        <label class="dropzone" id="dropzone" for="video-files">
+          <input id="video-files" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" multiple>
+          <span class="dropzone__icon" aria-hidden="true">＋</span>
+          <strong>Drop CCTV videos here or choose files</strong>
+          <span>MP4, WebM and MOV are accepted. Files are saved for analysis after upload.</span>
+        </label>
+        <div class="selected-files-summary" id="selected-files-summary" hidden>
+          <div>
+            <strong>Selected recordings</strong>
+            <span id="selected-files-count"></span>
+          </div>
+          <button class="btn-secondary" id="add-more-recordings" type="button">Add more recordings</button>
+        </div>
+      </div>
+      <p class="form-message" id="file-message" role="status"></p>
+      <div class="upload-list" id="upload-list"></div>
+      <div class="source-card__actions">
+        <button class="btn-save" id="upload-button" type="button" disabled>Upload videos</button>
+        <span class="action-note" id="upload-note">No files selected</span>
+      </div>
+      <div class="notice notice--info">
+        <strong>Upload status:</strong> a successful upload is saved, but analysis has not started yet.
+      </div>
+    </div>
+  </section>
+
+  <section class="source-card" aria-labelledby="live-title">
+    <header class="source-card__head">
+      <div>
+        <h2 id="live-title">Live CCTV</h2>
+        <p>Register an authorized stream for a future gateway connection.</p>
+      </div>
+      <span class="badge badge--planned">Not connected</span>
+    </header>
+
+    <form class="source-card__body live-form" id="live-form">
+      <div class="form-grid">
+        <label class="form-field">
+          <span>Camera name or ID <b aria-hidden="true">*</b></span>
+          <input id="live-camera" type="text" maxlength="100" required autocomplete="off" placeholder="Front entrance">
+        </label>
+        <label class="form-field">
+          <span>Stream URL <b aria-hidden="true">*</b></span>
+          <input id="live-url" type="url" maxlength="2000" required autocomplete="off"
+            placeholder="rtsp://camera-or-nvr.example/live">
+        </label>
+        <label class="form-field form-field--full">
+          <span>Description <em>optional</em></span>
+          <textarea id="live-description" maxlength="500" rows="3" placeholder="Entrance camera facing the reception area"></textarea>
+        </label>
+      </div>
+      <p class="form-message" id="live-message" role="status"></p>
+      <div class="source-card__actions">
+        <button class="btn-save" type="submit">Connect</button>
+      </div>
+      <div class="notice notice--warning">
+        <strong>How live preview works:</strong> browsers generally cannot play RTSP directly.
+        A future backend gateway must validate the authorized URL and provide a browser-compatible preview.
+        This page does not send credentials or attempt a connection.
+      </div>
+    </form>
+  </section>
+
+  <section class="source-card" aria-labelledby="registered-title">
+    <header class="source-card__head">
+      <div>
+        <h2 id="registered-title">Registered sources</h2>
+        <p>Live and uploaded sources appear here with their current status.</p>
+      </div>
+    </header>
+    <div class="source-tabs" role="tablist" aria-label="Registered source type">
+      <button class="tab tab--active" type="button" role="tab" aria-selected="true" aria-controls="live-sources" id="live-tab">Live cameras</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="recording-sources" id="recording-tab">Uploaded recordings</button>
+    </div>
+    <div class="source-card__body source-results">
+      <div class="empty-state" id="live-sources" role="tabpanel" aria-labelledby="live-tab">
+        <span class="empty-state__mark" aria-hidden="true">—</span>
+        <strong>No live cameras registered</strong>
+        <span>Connected camera records will appear here once the backend source API is available.</span>
+      </div>
+      <div class="empty-state" id="recording-sources" role="tabpanel" aria-labelledby="recording-tab" hidden>
+        <span class="empty-state__mark" aria-hidden="true">—</span>
+        <strong>No uploaded recordings</strong>
+        <span>Uploaded files and their processing status will appear here.</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script type="module" src="js/nav.js"></script>
+<script type="module" src="js/sources.js"></script>
+</body>
+</html>

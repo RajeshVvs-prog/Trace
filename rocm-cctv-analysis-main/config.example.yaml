@@ -39,6 +39,8 @@ gateway:
 bridge:
   port: 8081                   # detections: HTTP ingest + WebSocket out
   jsonl_path: output/detections.jsonl
+  storage: clickhouse          # clickhouse (server) or sqlite (portable laptop)
+  sqlite_path: output/ccvt.db
 
 auth:
   # "Sign in with Google" gate on the web UI (enforced at the proxy).
@@ -65,6 +67,11 @@ ui:
 
 ai:
   gpu_id: 0
+  # auto selects MIGraphX when available and otherwise ONNX Runtime CPU.
+  # Use cpu for portable laptop deployments or rocm to require AMD hardware.
+  backend: auto
+  sample_fps: 4
+  video: ""                    # optional recorded-video path for CPU mode
   # Detector: RT-DETR R50 ONNX, run by the airocm service on
   # onnxruntime-migraphx (AMD MI300X). The active variant is set on that
   # service (RTDETR_ONNX); this value is legacy from the old pipeline.

@@ -13,6 +13,7 @@ const LINK_GROUPS = [
     ["/people.html", "Tracking"],
   ]],
   ["Manage", [
+    ["/sources.html", "Camera Sources"],
     ["/graph.html", "Camera graph"],
     ["/faces.html", "Face registration"],
   ]],

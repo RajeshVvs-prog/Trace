@@ -34,8 +34,11 @@
 	# result endpoints it owns (/api/calib/map, /api/calib/points.bin), matched
 	# by the @bridge rule below.
 
-	@bridge path /ws /api/stats /api/history /api/settings /api/detections /api/detections/* /api/faces /api/faces/* /api/recordings /api/recordings/* /api/calib /api/calib/* /api/config /api/config/* /api/ai/status
+	@bridge path /ws /api/stats /api/history /api/settings /api/detections /api/detections/* /api/faces /api/faces/* /api/recordings /api/recordings/* /api/uploads /api/uploads/* /api/calib /api/calib/* /api/config /api/config/* /api/ai/status
 	handle @bridge {
+		request_body {
+			max_size 512MB
+		}
 		forward_auth auth:8082 {
 			uri /auth/verify
 			header_up CF-Connecting-IP {header.CF-Connecting-IP}

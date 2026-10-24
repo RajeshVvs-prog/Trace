@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investigation · CCTV Monitoring</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/sources.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar__brand">
+    <div>
+      <h1 class="topbar__title">Investigation Assistant</h1>
+      <span class="topbar__sub"><a href="sources.html">Back to Camera Sources</a></span>
+    </div>
+  </div>
+</header>
+<main class="sources investigation">
+  <section class="source-card">
+    <header class="source-card__head">
+      <div>
+        <p class="eyebrow">Evidence workspace</p>
+        <h2 id="recording-title">Loading recording…</h2>
+        <p id="recording-meta"></p>
+      </div>
+      <span class="badge badge--ready" id="recording-status">Loading</span>
+    </header>
+    <div class="investigation__video">
+      <video id="recording-video" controls preload="metadata"></video>
+      <p class="form-message" id="investigation-message" role="status"></p>
+    </div>
+    <div class="investigation__chat">
+      <div id="chat-messages" class="investigation__messages"></div>
+      <form id="chat-form" class="investigation__form">
+        <label class="form-field">
+          <span>Ask about this recording</span>
+          <textarea id="chat-input" rows="3" maxlength="2000"
+            placeholder="When does a person first appear?"></textarea>
+        </label>
+        <button class="btn-save" type="submit" id="chat-submit">Ask assistant</button>
+      </form>
+      <p class="investigation__note">
+        Answers are limited to persisted detector evidence. Timestamps are observations;
+        identity, tracking and physical locations are not inferred when unsupported.
+      </p>
+    </div>
+  </section>
+</main>
+<script type="module" src="js/investigation.js"></script>
+</body>
+</html>

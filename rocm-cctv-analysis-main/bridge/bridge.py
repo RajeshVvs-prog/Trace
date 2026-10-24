@@ -9,6 +9,7 @@ Runs on the host (not in the AI container). Start: scripts/start_bridge.sh
 """
 
 import collections
+import concurrent.futures
 import json
 import subprocess
 import sys
@@ -18,13 +19,15 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import ch
 import uvicorn
-from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s")
 log = logging.getLogger("bridge")
@@ -40,17 +43,39 @@ OUTPUT = Path(os.environ.get(
 
 app = FastAPI(title="ccvt detection bridge")
 
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(_: Request, exc: RequestValidationError):
+    details = [
+        {"field": ".".join(str(part) for part in error["loc"]), "message": error["msg"]}
+        for error in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "invalid upload request", "errors": details},
+    )
+
 clients: set[WebSocket] = set()
 received = 0
+analysis_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-analysis")
+analysis_jobs: set[str] = set()
+analysis_jobs_lock = threading.Lock()
 
 OUTPUT.mkdir(parents=True, exist_ok=True)
 
 recent: collections.deque = collections.deque(maxlen=300)
 
+WEBAPP_DIR = Path(os.environ.get(
+    "WEBAPP_DIR", Path(__file__).resolve().parent.parent / "webapp"))
+
 
 # ---- runtime AI settings (adjustable from the web UI, no restarts) ----
 
 SETTINGS_PATH = OUTPUT / "ai_settings.json"
+UPLOAD_DIR = Path(os.environ.get("BRIDGE_UPLOAD_DIR", str(OUTPUT / "uploads")))
+MAX_UPLOAD_BYTES = int(os.environ.get("CCVT_MAX_UPLOAD_BYTES", str(512 * 1024 * 1024)))
+UPLOAD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+UPLOAD_EXTENSIONS = {"mp4", "webm", "mov"}
 DEFAULT_SETTINGS = {"min_confidence": 0.30, "disabled_classes": [],
                     # IANA zone the web UI formats times in
                     "timezone": "Asia/Bangkok"}
@@ -67,6 +92,433 @@ def load_settings() -> dict:
 def save_settings(s: dict) -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(s, indent=2))
+
+
+def _upload_response(recording: dict) -> dict:
+    return {
+        "id": recording["id"],
+        "camera_name": recording["camera_name"],
+        "recording_at": recording["recording_at"],
+        "description": recording["description"],
+        "original_name": recording["original_name"],
+        "size_bytes": recording["size_bytes"],
+        "status": recording["status"],
+        "processing_status": recording["processing_status"],
+        "processing_progress": recording.get("processing_progress", 0),
+        "detection_count": recording.get("detection_count", 0),
+        "error": recording["error"],
+        "created_at": recording["created_at"],
+        "updated_at": recording["updated_at"],
+        "file_url": f"/api/uploads/{recording['id']}/file",
+        "analysis_url": f"/api/uploads/{recording['id']}/analysis",
+        "detections_url": f"/api/uploads/{recording['id']}/detections",
+    }
+
+
+def _validate_recording_at(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="recording_at must be an ISO date/time") from exc
+    if parsed.tzinfo is None:
+        return parsed.isoformat()
+    return parsed.astimezone().isoformat()
+
+
+def _validate_upload_signature(path: Path, extension: str) -> bool:
+    with path.open("rb") as stream:
+        header = stream.read(4096)
+    if extension in {"mp4", "mov"}:
+        return b"ftyp" in header[:256]
+    return header.startswith(b"\x1a\x45\xdf\xa3")
+
+
+@app.post("/api/uploads")
+async def upload_recording(
+    file: UploadFile = File(...),
+    camera_name: str = Form(""),
+    recording_at: str = Form(...),
+    description: str = Form(""),
+):
+    camera_name = camera_name.strip()
+    description = description.strip()
+    if not 1 <= len(camera_name) <= 100:
+        raise HTTPException(status_code=400, detail="camera_name is required and must be at most 100 characters")
+    if len(description) > 500:
+        raise HTTPException(status_code=400, detail="description must be at most 500 characters")
+    normalized_at = _validate_recording_at(recording_at)
+    original_name = Path(file.filename or "").name
+    extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+    if extension not in UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="unsupported video extension; use MP4, WebM or MOV")
+    if MAX_UPLOAD_BYTES <= 0:
+        raise HTTPException(status_code=503, detail="video uploads are disabled by server configuration")
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    recording_id = uuid.uuid4().hex
+    stored_name = f"{recording_id}.{extension}"
+    final_path = UPLOAD_DIR / stored_name
+    temp_path = UPLOAD_DIR / f".{recording_id}.upload"
+    size = 0
+    try:
+        with temp_path.open("wb") as destination:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"file exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit",
+                    )
+                destination.write(chunk)
+        if size == 0 or not _validate_upload_signature(temp_path, extension):
+            raise HTTPException(status_code=400, detail="file content is not a recognized video")
+        temp_path.replace(final_path)
+        now = datetime.now(timezone.utc).isoformat()
+        recording = {
+            "id": recording_id,
+            "camera_name": camera_name,
+            "recording_at": normalized_at,
+            "description": description,
+            "original_name": original_name[:255],
+            "stored_name": stored_name,
+            "size_bytes": size,
+            "status": "uploaded",
+            "processing_status": "not_processed",
+            "error": "",
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            ch.create_recording(recording)
+        except Exception:
+            final_path.unlink(missing_ok=True)
+            raise
+    except HTTPException:
+        temp_path.unlink(missing_ok=True)
+        final_path.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        temp_path.unlink(missing_ok=True)
+        final_path.unlink(missing_ok=True)
+        log.exception("video upload failed")
+        raise HTTPException(status_code=507, detail="could not store the uploaded video") from exc
+    except Exception as exc:
+        temp_path.unlink(missing_ok=True)
+        final_path.unlink(missing_ok=True)
+        log.exception("video metadata save failed")
+        raise HTTPException(status_code=503, detail="video metadata could not be saved") from exc
+    finally:
+        await file.close()
+    return _upload_response(recording)
+
+
+@app.get("/api/uploads")
+def list_uploaded_recordings():
+    try:
+        return [_upload_response(row) for row in ch.list_recordings()]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/uploads/{recording_id}")
+def uploaded_recording(recording_id: str):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    try:
+        recording = ch.get_recording(recording_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not recording:
+        raise HTTPException(status_code=404, detail="recording not found")
+    return _upload_response(recording)
+
+
+@app.get("/api/uploads/{recording_id}/file")
+def uploaded_recording_file(recording_id: str):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    try:
+        recording = ch.get_recording(recording_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not recording:
+        raise HTTPException(status_code=404, detail="recording not found")
+    stored_name = recording["stored_name"]
+    if Path(stored_name).name != stored_name or not re.fullmatch(
+        r"[0-9a-f]{32}\.(mp4|webm|mov)", stored_name
+    ):
+        raise HTTPException(status_code=500, detail="stored filename is invalid")
+    path = UPLOAD_DIR / stored_name
+    if not path.is_file() or path.resolve().parent != UPLOAD_DIR.resolve():
+        raise HTTPException(status_code=404, detail="recording file not found")
+    return FileResponse(path, filename=recording["original_name"])
+
+
+def _analysis_path(recording: dict) -> Path:
+    stored_name = recording["stored_name"]
+    if Path(stored_name).name != stored_name or not re.fullmatch(
+        r"[0-9a-f]{32}\.(mp4|webm|mov)", stored_name
+    ):
+        raise HTTPException(status_code=500, detail="stored filename is invalid")
+    path = (UPLOAD_DIR / stored_name).resolve()
+    if path.parent != UPLOAD_DIR.resolve() or not path.is_file():
+        raise HTTPException(status_code=404, detail="recording file not found")
+    return path
+
+
+def _run_analysis(recording_id: str, path: Path) -> None:
+    try:
+        recording = ch.get_recording(recording_id)
+        if not recording:
+            return
+        ch.update_recording(
+            recording_id, status="processing", processing_status="processing",
+            processing_progress=0, error="", updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        def progress(value: int) -> None:
+            ch.update_recording(
+                recording_id, status="processing", processing_status="processing",
+                processing_progress=max(0, min(99, value)),
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+        from video_analysis import analyze
+        rows, _sampled_frames = analyze(path, recording_id, recording["recording_at"], progress)
+        ch.delete_recording_detections(recording_id)
+        count = ch.insert_recording_detections(rows)
+        ch.update_recording(
+            recording_id, status="completed", processing_status="completed",
+            processing_progress=100, detection_count=count, error="",
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        log.info("video analysis completed recording=%s detections=%d", recording_id, count)
+    except Exception as exc:
+        log.exception("video analysis failed recording=%s", recording_id)
+        try:
+            ch.update_recording(
+                recording_id, status="failed", processing_status="failed",
+                error=str(exc)[:1000], updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception:
+            log.exception("could not save video analysis failure recording=%s", recording_id)
+    finally:
+        with analysis_jobs_lock:
+            analysis_jobs.discard(recording_id)
+
+
+@app.post("/api/uploads/{recording_id}/analyze")
+def analyze_uploaded_recording(recording_id: str):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    recording = ch.get_recording(recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="recording not found")
+    if recording["status"] == "processing" or recording["processing_status"] in {"queued", "processing"}:
+        raise HTTPException(status_code=409, detail="recording analysis is already in progress")
+    path = _analysis_path(recording)
+    with analysis_jobs_lock:
+        if recording_id in analysis_jobs:
+            raise HTTPException(status_code=409, detail="recording analysis is already queued")
+        analysis_jobs.add(recording_id)
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        ch.delete_recording_detections(recording_id)
+        updated = ch.update_recording(
+            recording_id, status="queued", processing_status="queued",
+            processing_progress=0, detection_count=0, error="", updated_at=now,
+        )
+        analysis_executor.submit(_run_analysis, recording_id, path)
+    except Exception:
+        with analysis_jobs_lock:
+            analysis_jobs.discard(recording_id)
+        raise
+    return _upload_response(updated or recording)
+
+
+@app.get("/api/uploads/{recording_id}/analysis")
+def uploaded_recording_analysis(recording_id: str):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    try:
+        recording = ch.get_recording(recording_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not recording:
+        raise HTTPException(status_code=404, detail="recording not found")
+    return _upload_response(recording)
+
+
+@app.get("/api/uploads/{recording_id}/detections")
+def uploaded_recording_detections(recording_id: str):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    try:
+        recording = ch.get_recording(recording_id)
+        if not recording:
+            raise HTTPException(status_code=404, detail="recording not found")
+        rows = ch.list_recording_detections(recording_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return [
+        {
+            "timestamp_ms": row["timestamp_ms"],
+            "frame_number": row["frame_number"],
+            "class_name": row["class_name"],
+            "confidence": row["confidence"],
+            "track_id": row["track_id"],
+            "bounding_box": {
+                "x": row["x"], "y": row["y"], "w": row["w"], "h": row["h"],
+            },
+            "frame": {"width": row["frame_width"], "height": row["frame_height"]},
+        }
+        for row in rows
+    ]
+
+
+@app.get("/api/uploads/{recording_id}/tracking")
+def uploaded_recording_tracking(recording_id: str):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    recording = ch.get_recording(recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="recording not found")
+    rows = ch.list_recording_detections(recording_id)
+    return {
+        "recording": _upload_response(recording),
+        "persistent_tracking_supported": False,
+        "limitation": "Uploaded-video analysis stores track_id as unknown; detections are observations, not persistent tracks.",
+        "detections": [
+            {
+                "timestamp_ms": row["timestamp_ms"],
+                "class_name": row["class_name"],
+                "confidence": row["confidence"],
+                "track_id": row["track_id"],
+                "bounding_box": {"x": row["x"], "y": row["y"], "w": row["w"], "h": row["h"]},
+            }
+            for row in rows
+        ],
+    }
+
+
+def _recording_evidence(recording_id: str, detections: list[dict]) -> list[dict]:
+    evidence = []
+    seen = set()
+    for row in detections:
+        timestamp_ms = int(row["timestamp_ms"])
+        key = (timestamp_ms, row["class_name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        evidence.append({
+            "timestamp_ms": timestamp_ms,
+            "class_name": row["class_name"],
+            "confidence": round(float(row["confidence"]), 3),
+            "url": f"/api/uploads/{recording_id}/file#t={timestamp_ms / 1000:.3f}",
+        })
+    return evidence[:40]
+
+
+def _investigation_answer(recording_id: str, question: str) -> tuple[str, list[dict]]:
+    detections = ch.list_recording_detections(recording_id)
+    lower = question.lower()
+    evidence = _recording_evidence(recording_id, detections)
+    person_rows = [row for row in detections if row["class_name"] == "person"]
+    if not detections:
+        return (
+            "I could not establish an event from the persisted analysis. "
+            "This recording has no supported-object detections, so I cannot "
+            "claim that a person or event was present. The detector does not "
+            "provide a complete description of every frame.",
+            [],
+        )
+    if "first" in lower and ("person" in lower or "people" in lower):
+        rows = person_rows
+        if not rows:
+            return "No person detection is persisted for this recording; I cannot determine when a person first appears.", []
+        first = min(rows, key=lambda row: row["timestamp_ms"])
+        return (
+            f"The first persisted person detection is at {datetime.fromtimestamp(first['timestamp_ms'] / 1000, timezone.utc).isoformat()} UTC "
+            f"({first['confidence']:.0%} confidence). This is a detector observation, not proof of identity or continuous presence.",
+            _recording_evidence(recording_id, [first]),
+        )
+    if "where" in lower and ("person" in lower or "people" in lower):
+        if not person_rows:
+            return "No person detection is persisted, so I cannot report where a person was seen.", []
+        points = []
+        for row in person_rows[:12]:
+            points.append(
+                f"{datetime.fromtimestamp(row['timestamp_ms'] / 1000, timezone.utc).isoformat()} UTC "
+                f"at normalized box ({row['x']:.2f}, {row['y']:.2f}, {row['w']:.2f}, {row['h']:.2f})"
+            )
+        return (
+            "Persisted person observations are available at these image coordinates: "
+            + "; ".join(points)
+            + ". Physical room locations and identity cannot be established from this data.",
+            _recording_evidence(recording_id, person_rows[:12]),
+        )
+    if "after" in lower or "what happens" in lower or "route" in lower or "went" in lower:
+        return (
+            "I cannot establish that sequence. Tracking IDs are unavailable for uploaded-video detections, "
+            "and the persisted results do not prove identity, entry/exit, or movement between locations.",
+            evidence[:8],
+        )
+    if "summar" in lower or "important" in lower or "event" in lower:
+        counts = collections.Counter(row["class_name"] for row in detections)
+        summary = ", ".join(f"{count} {name} observation(s)" for name, count in counts.items())
+        return (
+            f"The persisted detector evidence contains {len(detections)} observations: {summary}. "
+            "These are sampled object detections, not a complete narrative of the recording; "
+            "no event outside these observations can be asserted.",
+            evidence[:12],
+        )
+    return (
+        "I can answer questions about persisted supported-object detections and their timestamps. "
+        "I cannot reliably infer identities, physical locations, routes, or unobserved events from the current analysis.",
+        evidence[:8],
+    )
+
+
+@app.get("/api/uploads/{recording_id}/investigation")
+def recording_investigation_history(recording_id: str):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    recording = ch.get_recording(recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="recording not found")
+    return {
+        "recording": _upload_response(recording),
+        "messages": ch.list_recording_chat_messages(recording_id),
+    }
+
+
+@app.post("/api/uploads/{recording_id}/investigation")
+async def ask_recording_investigation(recording_id: str, request: Request):
+    if not UPLOAD_ID_RE.fullmatch(recording_id):
+        raise HTTPException(status_code=400, detail="bad recording id")
+    recording = ch.get_recording(recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="recording not found")
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="request body must be JSON") from exc
+    question = str(payload.get("message", "")).strip()
+    if not 1 <= len(question) <= 2000:
+        raise HTTPException(status_code=400, detail="message is required and must be at most 2000 characters")
+    if recording["processing_status"] != "completed":
+        raise HTTPException(status_code=409, detail="analyze the recording before starting an investigation")
+    try:
+        answer, evidence = _investigation_answer(recording_id, question)
+        now = datetime.now(timezone.utc).isoformat()
+        ch.add_recording_chat_message(recording_id, "user", question, [], now)
+        assistant = ch.add_recording_chat_message(recording_id, "assistant", answer, evidence, now)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return assistant
 
 
 settings = load_settings()
@@ -145,7 +597,19 @@ async def ws_endpoint(ws: WebSocket):
 @app.get("/api/health")
 def health():
     return {"clients": len(clients), "received": received,
-            "clickhouse": ch.stats()}
+            "storage": ch.BACKEND, "clickhouse": ch.stats()}
+
+
+@app.get("/api/streams")
+def streams():
+    """Return configured live streams, or an explicit unavailable status."""
+    if os.environ.get("CCVT_LIVE_STREAMS", "").lower() not in {"1", "true", "yes"}:
+        return JSONResponse(
+            {"ok": False, "streams": [],
+             "error": "live camera streams are disabled in portable mode"},
+            status_code=503,
+        )
+    return {"ok": True, "streams": []}
 
 
 def _masked(s: dict) -> dict:
@@ -231,12 +695,16 @@ def detections_window(camera: str, start_ms: int, end_ms: int):
         # NOTE: alias to ts_ms, never ts — an alias named after the column wins
         # in WHERE, so `ts BETWEEN <DateTime64>` would compare against the Int64
         # milliseconds and silently match nothing.
-        rows = ch.query(
-            "SELECT toUnixTimestamp64Milli(ts) AS ts_ms, class, conf, track, "
-            "x, y, w, h, fw, fh FROM detections "
-            "WHERE camera = {cam:String} AND ts BETWEEN fromUnixTimestamp64Milli({a:Int64}) "
-            "AND fromUnixTimestamp64Milli({b:Int64}) ORDER BY ts LIMIT 20000",
-            {"param_cam": camera, "param_a": str(start_ms), "param_b": str(end_ms)})
+        rows = (
+            ch.local_detections_window(camera, start_ms, end_ms)
+            if ch.is_sqlite() else
+            ch.query(
+                "SELECT toUnixTimestamp64Milli(ts) AS ts_ms, class, conf, track, "
+                "x, y, w, h, fw, fh FROM detections "
+                "WHERE camera = {cam:String} AND ts BETWEEN fromUnixTimestamp64Milli({a:Int64}) "
+                "AND fromUnixTimestamp64Milli({b:Int64}) ORDER BY ts LIMIT 20000",
+                {"param_cam": camera, "param_a": str(start_ms), "param_b": str(end_ms)})
+        )
     except Exception as e:
         return JSONResponse({"error": f"clickhouse: {e}"}, status_code=503)
     return [
@@ -256,15 +724,19 @@ def detections_summary(camera: str, start_ms: int, end_ms: int):
     if not re.fullmatch(r"[a-z0-9_]{1,40}", camera or ""):
         return JSONResponse({"error": "bad camera"}, status_code=400)
     try:
-        rows = ch.query(
-            "SELECT toUnixTimestamp(minute) AS m, class, uniqMerge(objects) AS n "
-            "FROM ccvt.minute_stats "
-            "WHERE camera = {cam:String} "
-            "AND minute >= fromUnixTimestamp({a:Int64}) "
-            "AND minute <  fromUnixTimestamp({b:Int64}) "
-            "GROUP BY m, class HAVING n > 0 ORDER BY m",
-            {"param_cam": camera, "param_a": str(int(start_ms) // 1000),
-             "param_b": str(int(end_ms) // 1000)})
+        rows = (
+            ch.local_detections_summary(camera, start_ms, end_ms)
+            if ch.is_sqlite() else
+            ch.query(
+                "SELECT toUnixTimestamp(minute) AS m, class, uniqMerge(objects) AS n "
+                "FROM ccvt.minute_stats "
+                "WHERE camera = {cam:String} "
+                "AND minute >= fromUnixTimestamp({a:Int64}) "
+                "AND minute <  fromUnixTimestamp({b:Int64}) "
+                "GROUP BY m, class HAVING n > 0 ORDER BY m",
+                {"param_cam": camera, "param_a": str(int(start_ms) // 1000),
+                 "param_b": str(int(end_ms) // 1000)})
+        )
     except Exception as e:
         return JSONResponse({"error": f"clickhouse: {e}"}, status_code=503)
     out: dict[int, dict[str, int]] = {}
@@ -281,12 +753,16 @@ def poses_window(camera: str, start_ms: int, end_ms: int):
         return JSONResponse({"error": "bad camera"}, status_code=400)
     end_ms = min(end_ms, start_ms + 180_000)
     try:
-        rows = ch.query(
-            "SELECT toUnixTimestamp64Milli(ts) AS ts_ms, track, kp_x, kp_y, kp_conf, "
-            "pose_conf, fw, fh FROM poses "
-            "WHERE camera = {cam:String} AND ts BETWEEN fromUnixTimestamp64Milli({a:Int64}) "
-            "AND fromUnixTimestamp64Milli({b:Int64}) ORDER BY ts LIMIT 20000",
-            {"param_cam": camera, "param_a": str(start_ms), "param_b": str(end_ms)})
+        rows = (
+            ch.local_poses_window(camera, start_ms, end_ms)
+            if ch.is_sqlite() else
+            ch.query(
+                "SELECT toUnixTimestamp64Milli(ts) AS ts_ms, track, kp_x, kp_y, kp_conf, "
+                "pose_conf, fw, fh FROM poses "
+                "WHERE camera = {cam:String} AND ts BETWEEN fromUnixTimestamp64Milli({a:Int64}) "
+                "AND fromUnixTimestamp64Milli({b:Int64}) ORDER BY ts LIMIT 20000",
+                {"param_cam": camera, "param_a": str(start_ms), "param_b": str(end_ms)})
+        )
     except Exception as e:
         return JSONResponse({"error": f"clickhouse: {e}"}, status_code=503)
     return [
@@ -1172,6 +1648,22 @@ def faces_image(person_id: str, fname: str):
 
 @app.get("/api/history")
 def history(limit: int = 100, camera: str = ""):
+    if ch.is_sqlite():
+        rows = ch.local_history(max(1, min(limit, 300)), camera)
+        return [
+            {
+                "timestamp": datetime.fromtimestamp(row["ts"] / 1000).isoformat(),
+                "camera_id": row["camera"],
+                "class_name": row["class"],
+                "confidence": row["conf"],
+                "track_id": None if row["track"] < 0 else row["track"],
+                "global_id": row["global_id"] or None,
+                "bounding_box": {"x": row["x"], "y": row["y"],
+                                 "w": row["w"], "h": row["h"]},
+                "frame": {"width": row["fw"], "height": row["fh"]},
+            }
+            for row in rows
+        ]
     items = list(recent)
     if camera:
         items = [r for r in items if r.get("camera_id") == camera]
@@ -1198,6 +1690,19 @@ def stats(hours: int = 24):
          "WHERE minute >= fromUnixTimestamp({since:Int64}) GROUP BY idx, class")
     args = {"param_since": str(since_s), "param_bucket": str(bucket * 60)}
     try:
+        if ch.is_sqlite():
+            result = ch.local_stats(hours)
+            bucket = max(1, (hours * 60) // 96)
+            since = int(time.time() // 60) - hours * 60
+            return {
+                "hours": hours,
+                "bucket_minutes": bucket,
+                "buckets": [],
+                "cameras": result["cameras"],
+                "totals": result["totals"],
+                "total": sum(result["totals"].values()),
+                "last_hour": 0,
+            }
         rows = ch.query(q, args)
         n_buckets = (hours * 60 + bucket - 1) // bucket
         buckets = [{"t": (since + i * bucket) * 60, "classes": {}}
@@ -1220,7 +1725,7 @@ def stats(hours: int = 24):
                       {"param_since": str((now_min - 60) * 60)})
         last_hour = int(lh[0]["objs"]) if lh else 0
     except Exception as e:
-        return JSONResponse({"error": f"clickhouse: {e}"}, status_code=503)
+        return JSONResponse({"error": f"{ch.BACKEND}: {e}"}, status_code=503)
 
     return {
         "hours": hours,
@@ -1233,6 +1738,10 @@ def stats(hours: int = 24):
     }
 
 
+if WEBAPP_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=WEBAPP_DIR, html=True), name="webapp")
+
+
 if __name__ == "__main__":
-    log.info("detection bridge on :%d, results -> clickhouse", PORT)
+    log.info("detection bridge on :%d, results -> %s", PORT, ch.BACKEND)
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")

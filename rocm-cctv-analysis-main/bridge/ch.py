@@ -24,6 +24,30 @@ from datetime import datetime
 
 import requests
 
+if os.environ.get("CCVT_STORAGE", "clickhouse").lower() == "sqlite":
+    from sqlite_store import (
+        detections_summary as sqlite_detections_summary,
+        detections_window as sqlite_detections_window,
+        history as sqlite_history,
+        init as sqlite_init,
+        insert as sqlite_insert,
+        create_recording as sqlite_create_recording,
+        get_recording as sqlite_get_recording,
+        list_recordings as sqlite_list_recordings,
+        update_recording as sqlite_update_recording,
+        delete_recording_detections as sqlite_delete_recording_detections,
+        insert_recording_detections as sqlite_insert_recording_detections,
+        list_recording_detections as sqlite_list_recording_detections,
+        add_recording_chat_message as sqlite_add_recording_chat_message,
+        list_recording_chat_messages as sqlite_list_recording_chat_messages,
+        poses_window as sqlite_poses_window,
+        stats as sqlite_stats,
+    )
+    BACKEND = "sqlite"
+    sqlite_init()
+else:
+    BACKEND = "clickhouse"
+
 log = logging.getLogger("ch")
 
 URL = os.environ.get("CLICKHOUSE_URL", "http://clickhouse:8123")
@@ -43,6 +67,8 @@ def _ms(iso):
 def _insert_now(table, rows):
     """JSONEachRow into `table`. Returns True on success. Runs on the worker."""
     if not rows:
+        return True
+    if BACKEND == "sqlite":
         return True
     body = "\n".join(json.dumps(r, separators=(",", ":")) for r in rows)
     params = {
@@ -143,8 +169,99 @@ def write_records(records):
                 "pose_conf": r.get("kp_conf") or 0.0,
                 "fw": fw, "fh": fh,
             })
+    if BACKEND == "sqlite":
+        try:
+            n = sqlite_insert(dets, poses)
+            with _lock:
+                _stats["detections"] += len(dets)
+                _stats["poses"] += len(poses)
+                _stats["written"] = _stats.get("written", 0) + n
+        except Exception as exc:
+            with _lock:
+                _stats["errors"] += 1
+                _stats["last_error"] = str(exc)[:200]
+            log.exception("sqlite insert failed")
+        return
     _enqueue("detections", dets)
     _enqueue("poses", poses)
+
+
+def is_sqlite() -> bool:
+    return BACKEND == "sqlite"
+
+
+def local_detections_window(camera, start_ms, end_ms):
+    return sqlite_detections_window(camera, start_ms, end_ms)
+
+
+def local_poses_window(camera, start_ms, end_ms):
+    return sqlite_poses_window(camera, start_ms, end_ms)
+
+
+def local_detections_summary(camera, start_ms, end_ms):
+    return sqlite_detections_summary(camera, start_ms, end_ms)
+
+
+def local_history(limit, camera=""):
+    return sqlite_history(limit, camera)
+
+
+def local_stats(hours):
+    return sqlite_stats(hours)
+
+
+def create_recording(recording):
+    if not BACKEND == "sqlite":
+        raise RuntimeError("source recording metadata requires SQLite storage")
+    return sqlite_create_recording(recording)
+
+
+def list_recordings():
+    if not BACKEND == "sqlite":
+        raise RuntimeError("source recording metadata requires SQLite storage")
+    return sqlite_list_recordings()
+
+
+def get_recording(recording_id):
+    if not BACKEND == "sqlite":
+        raise RuntimeError("source recording metadata requires SQLite storage")
+    return sqlite_get_recording(recording_id)
+
+
+def update_recording(recording_id, **changes):
+    if BACKEND != "sqlite":
+        raise RuntimeError("video analysis requires SQLite storage")
+    return sqlite_update_recording(recording_id, **changes)
+
+
+def delete_recording_detections(recording_id):
+    if BACKEND != "sqlite":
+        raise RuntimeError("video analysis requires SQLite storage")
+    return sqlite_delete_recording_detections(recording_id)
+
+
+def insert_recording_detections(rows):
+    if BACKEND != "sqlite":
+        raise RuntimeError("video analysis requires SQLite storage")
+    return sqlite_insert_recording_detections(rows)
+
+
+def list_recording_detections(recording_id):
+    if BACKEND != "sqlite":
+        raise RuntimeError("video analysis requires SQLite storage")
+    return sqlite_list_recording_detections(recording_id)
+
+
+def add_recording_chat_message(recording_id, role, content, evidence, created_at):
+    if BACKEND != "sqlite":
+        raise RuntimeError("recording investigation requires SQLite storage")
+    return sqlite_add_recording_chat_message(recording_id, role, content, evidence, created_at)
+
+
+def list_recording_chat_messages(recording_id):
+    if BACKEND != "sqlite":
+        raise RuntimeError("recording investigation requires SQLite storage")
+    return sqlite_list_recording_chat_messages(recording_id)
 
 
 def stats():
@@ -153,6 +270,8 @@ def stats():
 
 
 def wait_ready(attempts=30, delay=2.0):
+    if BACKEND == "sqlite":
+        return True
     for i in range(attempts):
         try:
             requests.get(f"{URL}/ping", timeout=2).raise_for_status()

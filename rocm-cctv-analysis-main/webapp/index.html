@@ -22,6 +22,16 @@
 </header>
 
 <main class="inv">
+  <section class="inv-recording" aria-label="Uploaded recording investigation">
+    <label>
+      <span>Uploaded recording</span>
+      <select id="recording-investigation">
+        <option value="">Investigate live-camera data</option>
+      </select>
+    </label>
+    <span id="recording-investigation-status">Select an analyzed upload to scope this investigation.</span>
+    <a id="recording-investigation-playback" href="playback.html" hidden>Open in Playback</a>
+  </section>
   <!-- sessions -->
   <aside class="inv-rail" id="rail">
     <button class="inv-new" id="new-chat">＋ New chat</button>
@@ -94,5 +104,6 @@
 
 <script type="module" src="js/nav.js"></script>
 <script type="module" src="js/agent.js?v=20260712"></script>
+<script type="module" src="js/recording-investigator.js"></script>
 </body>
 </html>

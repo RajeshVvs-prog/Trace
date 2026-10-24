@@ -3,3 +3,5 @@ uvicorn[standard]>=0.30
 pyyaml>=6.0
 python-multipart>=0.0.9
 requests>=2.32
+numpy>=1.26,<2.0
+onnxruntime>=1.18

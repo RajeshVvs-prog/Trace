@@ -48,6 +48,7 @@ import sys
 import threading
 import time
 import urllib.request
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 import io
@@ -55,6 +56,11 @@ import io
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
+
+try:
+    from backend import create_session
+except ImportError:
+    from ai_rocm.backend import create_session
 
 TZ = timezone(timedelta(hours=7))
 SIZE = 640                       # RT-DETR is a fixed 640x640 graph
@@ -128,7 +134,10 @@ class ClassFilter:
 # what the model is actually sure about.
 CONF_FLOOR = float(os.environ.get("CONF_FLOOR", "0.30"))
 
-MODEL = os.environ.get("RTDETR_ONNX", "/models/rtdetr_r50_uint8.onnx")
+MODEL = os.environ.get(
+    "RTDETR_ONNX",
+    str(Path(__file__).resolve().parent.parent / "ai" / "models" / "rtdetr_r50_uint8.onnx"),
+)
 BRIDGE = os.environ.get("BRIDGE_URL", "http://bridge:8081/ingest")
 GATEWAY_RTSP = os.environ.get("GATEWAY_RTSP", "rtsp://gateway:8554")
 
@@ -342,18 +351,12 @@ class ReidGate:
 
 
 def build_session():
-    so = ort.SessionOptions()
-    so.log_severity_level = 3
-    providers = [
-        ("MIGraphXExecutionProvider", {
-            "migraphx_fp16_enable": True,
-        }),
-        "CPUExecutionProvider",
-    ]
-    s = ort.InferenceSession(MODEL, so, providers=providers)
-    if "MIGraphXExecutionProvider" not in s.get_providers():
-        sys.exit("MIGraphX provider unavailable — refusing to run on CPU")
-    return s
+    try:
+        session, provider = create_session(ort, MODEL)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise SystemExit(f"[airocm] inference startup failed: {exc}") from exc
+    print(f"[airocm] inference backend: {provider}", flush=True)
+    return session
 
 
 class Track:
@@ -772,6 +775,56 @@ class CameraReader(threading.Thread):
             return self.last, False
 
 
+class VideoReader(threading.Thread):
+    """Read a recorded video with the same newest-frame interface as cameras."""
+
+    def __init__(self, cam, path, fps):
+        super().__init__(daemon=True)
+        self.cam, self.path, self.fps = cam, path, fps
+        self.lock = threading.Lock()
+        self.frame = None
+        self.last = None
+        self.frames = 0
+        self.drops = 0
+        self.done = False
+
+    def run(self):
+        try:
+            import cv2
+            cap = cv2.VideoCapture(self.path)
+            if not cap.isOpened():
+                raise RuntimeError(f"cannot open recorded video {self.path!r}")
+            source_fps = cap.get(cv2.CAP_PROP_FPS) or self.fps
+            delay = 1.0 / max(self.fps, 0.1)
+            next_frame = time.monotonic()
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                now = time.monotonic()
+                if now < next_frame:
+                    time.sleep(next_frame - now)
+                next_frame = max(next_frame + delay, time.monotonic())
+                frame = cv2.resize(frame, (SIZE, SIZE), interpolation=cv2.INTER_AREA)
+                with self.lock:
+                    if self.frame is not None:
+                        self.drops += 1
+                    self.frame = self.last = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.frames += 1
+            cap.release()
+        except Exception as exc:
+            print(f"[{self.cam}] recorded reader failed: {exc}", flush=True)
+        finally:
+            self.done = True
+
+    def take(self):
+        with self.lock:
+            if self.frame is not None:
+                f, self.frame = self.frame, None
+                return f, True
+            return self.last, False
+
+
 class AsyncPoster:
     """Fire-and-forget HTTP POST on a background thread. The inference loop
     never blocks on the bridge. One thread is enough: if the bridge is slower
@@ -825,22 +878,33 @@ def load_cameras(spec):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cameras", nargs="+", required=True)
+    ap.add_argument("--cameras", nargs="+")
+    ap.add_argument("--video", help="process one recorded video instead of camera streams")
     ap.add_argument("--fps", type=float, default=4.0)
+    ap.add_argument("--no-post", action="store_true",
+                    help="do not send detections to the bridge")
     args = ap.parse_args()
-    args.cameras = load_cameras(args.cameras)
+    if args.video and args.cameras:
+        ap.error("--video and --cameras cannot be used together")
+    if not args.video and not args.cameras:
+        ap.error("one of --video or --cameras is required")
+    args.cameras = ["video"] if args.video else load_cameras(args.cameras)
 
     sess = build_session()
     inp = sess.get_inputs()[0].name
     print(f"[airocm] {sess.get_providers()[0]}, {len(args.cameras)} cameras, "
           f"conf>={CONF_FLOOR}", flush=True)
 
-    readers = {c: CameraReader(c, args.fps) for c in args.cameras}
+    readers = (
+        {"video": VideoReader("video", args.video, args.fps)}
+        if args.video else
+        {c: CameraReader(c, args.fps) for c in args.cameras}
+    )
     for r in readers.values():
         r.start()
     trackers = {c: IoUTracker() for c in args.cameras}
     saver = FrameSaver()
-    poster = AsyncPoster(BRIDGE)
+    poster = None if args.no_post else AsyncPoster(BRIDGE)
     reid_gate = ReidGate(SiglipSender())
     classes = ClassFilter()
 
@@ -876,6 +940,8 @@ def main():
         # --- Collect frames into buf_a ---
         taken = {c: readers[c].take() for c in order}
         if not any(fresh for _, fresh in taken.values()):
+            if args.video and all(readers[c].done for c in order):
+                break
             time.sleep(period / 4)
             continue
         if any(f is None for f, _ in taken.values()):
@@ -949,7 +1015,8 @@ def main():
                 records.append(rec)
             reid_gate.feed(cam, taken[cam][0], persons,
                            int(time.time() * 1000))
-        poster.send(records)                    # non-blocking
+        if poster is not None:
+            poster.send(records)                # non-blocking
 
         # Swap buffers so next iteration fills the other one
         buf_a, buf_b = buf_b, buf_a

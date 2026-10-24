@@ -143,6 +143,127 @@ cp config.example.yaml config.local.yaml   # credentials + upstream mode
 
 Requires: Docker + a working ROCm install on the host (`/opt/rocm`).
 
+### Portable CPU detection (Milestone A)
+
+The detector now supports runtime backend selection. Set
+`INFERENCE_BACKEND=cpu` to use the standard ONNX Runtime CPU provider, or leave
+it as `auto` to prefer MIGraphX when it is available and otherwise use CPU.
+The ROCm deployment remains unchanged when `INFERENCE_BACKEND=rocm` is used.
+
+For a laptop or recorded-video trial, build the CPU image rather than the
+ROCm Compose override:
+
+```powershell
+docker build -f ai_rocm/Dockerfile.cpu -t ccvt-airocm-cpu ai_rocm
+docker run --rm `
+  -e INFERENCE_BACKEND=cpu `
+  -e RTDETR_ONNX=/app/models/rtdetr_r50_uint8.onnx `
+  -v "${PWD}\ai\models:/app/models:ro" `
+  -v "${PWD}\sample.mp4:/app/sample.mp4:ro" `
+  ccvt-airocm-cpu --video /app/sample.mp4 --fps 2 --no-post
+```
+
+The recorded-video path performs genuine model inference and exits when the
+file ends. It does not create fake events and does not require a camera,
+ClickHouse, bridge, vLLM, ROCm, or an API key. The existing RT-DETR model must
+be downloaded and validated first; model compatibility and laptop performance
+are hardware-dependent and are not assumed by this command.
+
+For portable event history, run the bridge with `CCVT_STORAGE=sqlite`.
+`CCVT_SQLITE_PATH` controls the database location. SQLite currently persists
+detections and poses and powers the history, playback-window, timeline-summary
+and statistics endpoints; ReID, face, plate and investigator tables remain
+ClickHouse-backed until their dedicated portable adapters are implemented.
+
+### Portable dashboard preview
+
+The existing dashboard can be opened without ClickHouse, ROCm, vLLM or camera
+hardware using the CPU Compose file:
+
+```powershell
+docker compose -f docker-compose.cpu.yml up -d --build
+Start-Process http://localhost:8080
+```
+
+This serves the existing web UI and enables SQLite-backed history endpoints.
+Live camera tiles return an explicit unavailable status because no gateway or
+camera source is started by this profile. The minimal image also omits ffmpeg,
+so server-side frame extraction from recordings is unavailable in this
+dashboard-only profile. Stop it with:
+
+```powershell
+docker compose -f docker-compose.cpu.yml down
+```
+
+### Public RTSP stream smoke test
+
+For a laptop-only live-stream test, the repository includes an isolated
+Wowza RTSP test stack. It tests camera transport and the dashboard without
+using the production ROCm compose files or the private NVR configuration:
+
+```powershell
+docker compose -f docker-compose.public-test.yml up -d --build
+Start-Process http://localhost:8080
+```
+
+The stream is proxied by go2rtc as `public_ch01_sub`. The gateway must show
+received packets before the browser can display video:
+
+```powershell
+docker exec ccvt-gateway-public-test wget -qO- http://127.0.0.1:1984/api/streams
+```
+
+This test stack does not bypass authentication or access controls on private
+cameras; it uses only the public stream published by Wowza for testing.
+
+CPU detection is opt-in and uses the downloaded Apache-2.0 YOLOX-Nano model
+at `ai\models\yolox_nano.onnx`:
+
+```powershell
+docker compose -f docker-compose.public-test.yml --profile detector up -d --build
+docker compose -f docker-compose.public-test.yml logs -f detector
+```
+
+The portable detector samples the stream at two frames per second and reports
+people, bicycles, cars, motorcycles, and trucks to the SQLite-backed bridge.
+The production RT-DETR/ROCm detector is unchanged.
+
+Stop the smoke-test stack with:
+
+```powershell
+docker compose -f docker-compose.public-test.yml down
+```
+
+To run genuine CPU detection against a recorded file, create
+`video\input.mp4`, place the validated RT-DETR model at
+`ai\models\rtdetr_r50_uint8.onnx`, then start the opt-in detector profile:
+
+```powershell
+docker compose -f docker-compose.cpu.yml --profile detector up -d --build
+docker compose -f docker-compose.cpu.yml logs -f detector
+```
+
+The detector sends records to the bridge at `/ingest`; the bridge persists them
+to `output\ccvt.db`, and the dashboard's history/statistics APIs can read them.
+The detector is a finite batch job: when the video ends, its container exits.
+Missing model or video files cause an explicit startup error; no placeholder
+events are generated.
+
+Validate the model before starting detection:
+
+```powershell
+docker build -f ai_rocm/Dockerfile.cpu -t ccvt-airocm-cpu ai_rocm
+docker run --rm `
+  --entrypoint python `
+  -v "${PWD}\ai\models:/models:ro" `
+  ccvt-airocm-cpu `
+  python model_check.py /models/rtdetr_r50_uint8.onnx --backend cpu
+```
+
+The command reports the SHA-256 digest, selected ONNX Runtime provider, input
+shape and output shapes. A missing, truncated or CPU-incompatible model fails
+before any video is processed.
+
 ### Models
 
 Model weights are **not committed** (they are large — the RT-DETR detector alone

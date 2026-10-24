@@ -21,6 +21,7 @@ services:
       # uint8 variant embeds /255 + NHWC->NCHW in the graph (GPU-side);
       # feeding raw ffmpeg frames cut ~150 ms/batch of numpy from the loop
       RTDETR_ONNX: /models/rtdetr_r50_uint8.onnx
+      INFERENCE_BACKEND: ${INFERENCE_BACKEND:-auto}
       BRIDGE_URL: http://bridge:8081/ingest
       GATEWAY_RTSP: rtsp://gateway:8554
       CAMERAS_YAML: /configs/cameras.yaml

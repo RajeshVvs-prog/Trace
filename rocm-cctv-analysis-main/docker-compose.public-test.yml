@@ -1,0 +1,67 @@
+services:
+  gateway:
+    image: alexxit/go2rtc:1.9.14
+    container_name: ccvt-gateway-public-test
+    restart: unless-stopped
+    volumes:
+      - ./gateway/public-test-go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ./webapp:/webapp:ro
+      - ./webapp/public-test-config.json:/webapp/config.json:ro
+
+  bridge:
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile.cpu
+    container_name: ccvt-bridge-public-test
+    restart: unless-stopped
+    environment:
+      BRIDGE_PORT: "8081"
+      BRIDGE_OUTPUT: /output
+      WEBAPP_DIR: /repo/webapp
+      CCVT_STORAGE: sqlite
+      CCVT_SQLITE_PATH: /output/public-test.db
+      CCVT_LIVE_STREAMS: "1"
+      CCVT_MAX_UPLOAD_BYTES: "536870912"
+      VIDEO_ANALYSIS_MODEL: /models/yolox_nano.onnx
+    volumes:
+      - ./output:/output
+      - ./ai/models:/models:ro
+      - ./ai_rocm:/ai_rocm:ro
+      - ./output/public-test-ai-settings.json:/output/ai_settings.json:ro
+      - ./webapp:/repo/webapp:ro
+    command: ["python", "bridge.py"]
+
+  proxy:
+    image: caddy:2-alpine
+    container_name: ccvt-proxy-public-test
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./gateway/public-test-Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - gateway
+      - bridge
+
+  detector:
+    profiles: ["detector"]
+    build:
+      context: ./ai_rocm
+      dockerfile: Dockerfile.cpu
+    container_name: ccvt-detector-public-test
+    restart: unless-stopped
+    depends_on:
+      - gateway
+      - bridge
+    environment:
+      YOLOX_ONNX: /models/yolox_nano.onnx
+      BRIDGE_URL: http://bridge:8081/ingest
+      SOURCE: rtsp://gateway:8554/public_ch01_sub
+      CAMERA_ID: public_ch01
+      DETECT_FPS: "2"
+      CONF_FLOOR: "0.05"
+    volumes:
+      - ./ai/models:/models:ro
+      - ./ai/configs:/configs:ro
+    entrypoint: ["python"]
+    command: ["portable_detector.py"]

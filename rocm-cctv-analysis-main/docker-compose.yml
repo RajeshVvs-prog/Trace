@@ -163,6 +163,8 @@ services:
       CLICKHOUSE_DB: ccvt
       CLICKHOUSE_USER: ccvt
       CLICKHOUSE_PASSWORD: ccvt
+      CCVT_STORAGE: ${CCVT_STORAGE:-clickhouse}
+      CCVT_SQLITE_PATH: ${CCVT_SQLITE_PATH:-/output/ccvt.db}
     volumes:
       - ./output:/output
       - ./recordings:/recordings:ro
@@ -222,4 +224,3 @@ services:
     depends_on: [gateway]
     # GPU access (AMD /dev/kfd + /dev/dri) is provided by the override file.
     # The detector runs as the `airocm` service, defined in the override file.
-

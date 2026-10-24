@@ -1,0 +1,5 @@
+numpy>=1.26,<2.0
+onnxruntime>=1.18
+opencv-python-headless>=4.8
+Pillow>=10
+requests>=2.32
