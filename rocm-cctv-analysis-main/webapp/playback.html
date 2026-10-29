@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playback · TRACE</title>
+<link rel="stylesheet" href="css/app.css?v=20261029">
+<link rel="stylesheet" href="css/trace.css?v=20261029r">
+<link rel="stylesheet" href="css/playback.css?v=20261029r">
+<link rel="icon" type="image/png" href="assets/logo.png">
+</head>
+<body class="pb-body">
+
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="nav" id="site-nav"></header>
+<div class="page-strip"><div><h1 class="page-strip__title">Playback</h1><p class="page-strip__sub">Play a recording with every detection, track number and body pose drawn on it.</p></div></div>
+
+<nav class="pb-toolbar">
+  <label class="pb-field">
+    <span class="pb-field__label">Recording</span>
+    <select id="uploaded-recording" class="pb-select">
+      <option value="">Use live camera archive</option>
+    </select>
+  </label>
+  <label class="pb-field live-only">
+    <span class="pb-field__label">Camera</span>
+    <select id="camera" class="pb-select"></select>
+  </label>
+  <label class="pb-field live-only">
+    <span class="pb-field__label">Date</span>
+    <select id="date" class="pb-select"></select>
+  </label>
+  <div class="pb-toolbar__spacer"></div>
+  <label class="pb-field pb-field--thr">
+    <span class="pb-field__label">Confidence</span>
+    <input type="range" id="pb-thr" min="0.10" max="0.90" step="0.05">
+    <span class="pb-field__val" id="pb-thr-val">—</span>
+  </label>
+  <button class="pb-toggle pb-toggle--on" id="pb-ai" type="button" aria-pressed="true">Detections</button>
+  <span class="pb-seg-count" id="seg-count">—</span>
+</nav>
+
+<main class="pb-main" id="main">
+  <section class="pb-stage">
+    <div class="pb-player">
+      <video id="player" preload="auto" playsinline></video>
+      <canvas class="pb-anno" id="pb-anno"></canvas>
+      <div class="pb-empty" id="empty">Choose a recording to play it.</div>
+    </div>
+    <div class="pb-bar">
+      <button class="pb-play" id="pb-play" title="play / pause" aria-label="play/pause">▶</button>
+      <span class="pb-bar__now" id="playing">—</span>
+      <span class="pb-bar__status" id="status-text">—</span>
+    </div>
+  </section>
+
+  <aside class="pb-review">
+    <div class="pb-review__head live-only">
+      <span>Suggested action</span>
+      <span class="pb-review__hint">pause the clip — the AI reviews the frame</span>
+    </div>
+    <div class="pb-review__log live-only" id="suggest-log">
+      <div class="pb-review__idle" id="suggest-idle">
+        Pause the clip and the AI reads that frame: an Observer reports what it
+        sees, an Analyst infers who/what/why, and a Supervisor decides whether to
+        check the surrounding cameras before giving a verdict.
+      </div>
+    </div>
+    <div class="pbu-panel" id="pbu-panel" hidden>
+      <div class="pbu-head">
+        <strong id="pbu-title">Uploaded recording</strong>
+        <span id="pbu-meta"></span>
+        <span class="pbu-links">
+          <a id="pbu-investigate" href="index.html">Investigate</a>
+          <a id="pbu-tracking" href="people.html">Tracking</a>
+          <a href="sources.html">Sources</a>
+        </span>
+      </div>
+      <form class="pbu-search" id="pbu-search-form">
+        <input id="pbu-search" autocomplete="off" placeholder="Find by appearance, e.g. red top, white bag" aria-label="Find by appearance">
+        <button type="submit" class="btn btn--sm btn--primary">Search</button>
+      </form>
+      <div class="pbu-results" id="pbu-results"></div>
+      <div class="pbu-section">Events</div>
+      <div class="pbu-list" id="pbu-events"></div>
+      <div class="pbu-section">Tracked objects</div>
+      <div class="pbu-list" id="pbu-tracks"></div>
+    </div>
+    <form class="pb-search live-only" id="pb-search-form">
+      <input id="pb-search" autocomplete="off"
+             placeholder="Search — “a dog” · or across all: “which camera has a parcel”">
+      <button type="submit" title="search" aria-label="search">🔍</button>
+    </form>
+  </aside>
+</main>
+
+<div class="pb-timeline" id="pb-timeline">
+  <div class="pb-tl-legend">
+    <span><i class="pb-dot pb-dot--person"></i>person</span>
+    <span><i class="pb-dot pb-dot--vehicle"></i>vehicle</span>
+    <span><i class="pb-dot pb-dot--animal"></i>animal</span>
+    <span class="pb-tl-legend__hint live-only">scroll ↔ to move · click to jump</span>
+    <span class="pb-tl-zoom live-only">
+      <button id="pb-zoom-out" title="zoom out">−</button>
+      <button id="pb-zoom-in" title="zoom in">+</button>
+    </span>
+  </div>
+  <div class="pbu-tl" id="pbu-tl-wrap" hidden>
+    <canvas id="pbu-tl"></canvas>
+  </div>
+  <div class="pb-tl-scroll live-only" id="pb-tl-scroll">
+    <canvas id="pb-tl"></canvas>
+  </div>
+  <div class="pb-tl-tip" id="pb-tl-tip" hidden></div>
+</div>
+
+<footer class="statusbar">
+  <span id="status-foot">—</span>
+  <span class="statusbar__right live-only">recorder · 60s segments · H.264 copy</span>
+</footer>
+
+<script type="module" src="js/nav.js?v=20261029r"></script>
+<script type="module">
+  import { getMode } from "./js/mode.js";
+  if (await getMode() === "server") import("./js/playback.js?v=20261029r");
+</script>
+<script type="module" src="js/playback-upload.js?v=20261029r"></script>
+</body>
+</html>

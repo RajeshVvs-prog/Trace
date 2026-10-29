@@ -1,0 +1,28 @@
+{
+  "classes": [
+    "person",
+    "car",
+    "truck",
+    "motorcycle",
+    "bicycle"
+  ],
+  "model": "rtdetr",
+  "aspect": "16:9",
+  "nvrs": [
+    {
+      "id": "nvr1",
+      "name": "NVR-01",
+      "host": "192.168.0.163",
+      "channels": 16,
+      "skip": []
+    },
+    {
+      "id": "nvr2",
+      "name": "NVR-02",
+      "host": "192.168.0.158",
+      "channels": 16,
+      "skip": []
+    }
+  ],
+  "extra_cameras": []
+}

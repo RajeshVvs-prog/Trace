@@ -1,0 +1,23 @@
+:8080 {
+  encode gzip
+
+  @appfiles path *.html *.js *.css /
+  header @appfiles Cache-Control "no-cache, no-store, must-revalidate, private"
+
+  @gateway path /api/streams /api/ws
+  handle @gateway {
+    reverse_proxy gateway:1984
+  }
+
+  @bridge path /ws /api/health /api/history /api/stats /api/settings /api/detections /api/detections/* /api/uploads /api/uploads/* /api/config /api/config/*
+  handle @bridge {
+    request_body {
+      max_size 512MB
+    }
+    reverse_proxy bridge:8081
+  }
+
+  handle {
+    reverse_proxy gateway:1984
+  }
+}

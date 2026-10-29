@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in · TRACE</title>
+<link rel="stylesheet" href="/css/app.css?v=20261029a">
+<link rel="stylesheet" href="/css/trace.css?v=20261029a">
+<link rel="stylesheet" href="/css/login.css?v=20261029a">
+<link rel="icon" type="image/png" href="/assets/logo.png">
+</head>
+<body class="page-login">
+<main class="login" id="main">
+  <a class="login__brand" href="/login" aria-label="TRACE">
+    <img src="/assets/logo.png" alt="" width="32" height="32"><span>TRACE</span>
+  </a>
+
+  <section class="login__card" aria-labelledby="login-title">
+    <div class="loading" id="login-loading"><span class="spinner" aria-hidden="true"></span>Checking this server…</div>
+
+    <form id="login-form" novalidate hidden>
+      <h1 id="login-title">Sign in</h1>
+      <p class="login__lede" id="login-lede">Sign in to investigate the recordings on this machine.</p>
+
+      <div class="field" id="name-field" hidden>
+        <label class="field__label" for="name">Your name <small>optional</small></label>
+        <input class="input" id="name" name="name" autocomplete="name" maxlength="80">
+      </div>
+      <div class="field">
+        <label class="field__label" for="username">Username</label>
+        <input class="input" id="username" name="username" autocomplete="username" required
+               autocapitalize="none" spellcheck="false" maxlength="64">
+      </div>
+      <div class="field">
+        <label class="field__label" for="password">Password</label>
+        <div class="login__pw">
+          <input class="input" id="password" name="password" type="password" autocomplete="current-password" required>
+          <button type="button" class="btn btn--quiet btn--sm" id="pw-toggle" aria-controls="password" aria-pressed="false">Show</button>
+        </div>
+        <span class="field__hint" id="pw-hint" hidden>At least 10 characters, different from the username.</span>
+      </div>
+      <div class="field" id="confirm-field" hidden>
+        <label class="field__label" for="confirm">Repeat password</label>
+        <input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password">
+      </div>
+      <label class="login__remember" id="remember-row">
+        <input type="checkbox" id="remember"> Keep me signed in on this computer for 30 days
+      </label>
+
+      <p class="notice notice--err" id="login-error" role="alert"></p>
+      <button class="btn btn--primary btn--lg login__submit" type="submit" id="login-submit">Sign in</button>
+    </form>
+
+    <div id="login-off" hidden>
+      <h1>Sign-in is turned off</h1>
+      <p class="login__lede">This TRACE server is running without accounts.</p>
+      <a class="btn btn--primary" href="/">Open TRACE</a>
+    </div>
+  </section>
+
+  <p class="login__foot" id="login-foot">Accounts are stored on this computer only. If you forget the admin password,
+    an administrator of this machine can delete <code>output\users.json</code> to set up a new one.</p>
+</main>
+<script type="module" src="/js/login.js?v=20261029a"></script>
+</body>
+</html>

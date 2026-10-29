@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Opening the Investigator</title>
+<script>
+  // Old links (investigation.html?id=<recording>) forward to the Investigator.
+  const id = new URLSearchParams(location.search).get("id") || "";
+  location.replace("/investigate.html" + (id ? "?recording=" + encodeURIComponent(id) : ""));
+</script>
+</head>
+<body><p>Opening the Investigator. <a href="/investigate.html">Continue</a></p></body>
+</html>

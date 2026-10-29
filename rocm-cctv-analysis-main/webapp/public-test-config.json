@@ -1,0 +1,21 @@
+{
+  "classes": [
+    "person",
+    "car",
+    "truck",
+    "motorcycle",
+    "bicycle"
+  ],
+  "model": "rtdetr",
+  "aspect": "16:9",
+  "nvrs": [
+    {
+      "id": "public",
+      "name": "Public RTSP test stream",
+      "host": "public-test",
+      "channels": 1,
+      "skip": []
+    }
+  ],
+  "extra_cameras": []
+}

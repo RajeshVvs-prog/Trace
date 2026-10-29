@@ -1,0 +1,15 @@
+api:
+  listen: ":1984"
+  static_dir: "/webapp"
+
+rtsp:
+  listen: ":8554"
+
+log:
+  level: info
+
+streams:
+  public_ch01_sub:
+    - rtsp://9627b0bf2a7b.entrypoint.cloud.wowza.com:1935/app-p5260J38/66abe4b9_stream1
+  public_ch01_main:
+    - rtsp://9627b0bf2a7b.entrypoint.cloud.wowza.com:1935/app-p5260J38/66abe4b9_stream1

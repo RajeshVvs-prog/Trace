@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investigate · TRACE</title>
+<link rel="stylesheet" href="css/app.css?v=20261029r">
+<link rel="stylesheet" href="css/trace.css?v=20261029r">
+<link rel="stylesheet" href="css/agent.css?v=20261029r">
+<link rel="stylesheet" href="css/investigate.css?v=20261029r">
+<link rel="icon" type="image/png" href="assets/logo.png">
+</head>
+<body class="page-investigate">
+<a class="skip-link" href="#input">Skip to the question box</a>
+<header class="nav" id="site-nav"></header>
+
+<main class="inv" id="main">
+  <!-- left: which recording, its status, and where else to look at it -->
+  <aside class="inv-rail" id="rail" aria-label="Recording">
+    <button class="inv-rail__title live-only" id="sidebar-toggle" type="button"
+            aria-expanded="true">Data &amp; evidence <span aria-hidden="true">‹</span></button>
+    <section class="inv-recording" aria-labelledby="rec-pick-label">
+      <label class="field">
+        <span class="field__label" id="rec-pick-label">Recording</span>
+        <select id="recording-investigation" class="select">
+          <option value="">Live-camera data</option>
+        </select>
+      </label>
+      <p class="inv-recording__status" id="recording-investigation-status" role="status">Loading recordings…</p>
+      <div class="inv-recording__links" id="recording-links" hidden>
+        <a class="btn btn--sm" id="recording-investigation-playback" href="playback.html">Playback</a>
+        <a class="btn btn--sm" id="recording-investigation-tracking" href="people.html">Tracking</a>
+        <button class="btn btn--sm btn--quiet btn--danger" type="button" id="recording-clear">Clear chat</button>
+      </div>
+    </section>
+
+    <!-- GPU server: conversations, model and the live evidence panel -->
+    <button class="inv-new live-only" id="new-chat" type="button">New chat</button>
+    <div class="inv-sessions live-only" id="sessions"></div>
+    <div class="inv-model live-only">
+      <label>
+        <span class="inv-model__label">Model</span>
+        <select id="model"></select>
+      </label>
+      <label>
+        <span class="inv-model__label">Search window</span>
+        <select id="hours">
+          <option value="6">last 6 hours</option>
+          <option value="24" selected>last 24 hours</option>
+          <option value="72">last 3 days</option>
+          <option value="168">last 7 days</option>
+        </select>
+      </label>
+    </div>
+    <button class="inv-tools-fab live-only" id="tools-fab" type="button" title="What can I ask?">
+      Tools &amp; abilities
+    </button>
+    <div class="inv-tools-panel live-only" id="tools-panel" hidden></div>
+    <section class="inv-evidence live-only">
+      <div class="inv-evidence__head">
+        <span>Evidence</span>
+        <span class="inv-evidence__tools">
+          <button class="inv-evidence__reset on" id="boxes-toggle" type="button" title="Detection boxes on live cameras">boxes</button>
+          <button class="inv-evidence__reset" id="evidence-reset" type="button" title="Back to live cameras">live</button>
+        </span>
+      </div>
+      <div class="inv-evidence__tabs" id="ev-tabs"></div>
+      <div class="inv-evidence__body" id="evidence"></div>
+    </section>
+
+    <div class="inv-help" id="inv-help">
+      <h2>How answers work</h2>
+      <p>Answers come only from this recording’s analysis: tracked people and vehicles, their colours,
+        movement and body pose. Click a timestamp to see that moment in the video.</p>
+      <p>Questions about identity, age, gender or ethnicity are declined.</p>
+    </div>
+  </aside>
+
+  <!-- centre: the conversation -->
+  <section class="inv-chat" aria-label="Conversation">
+    <div class="inv-thread" id="thread" aria-live="polite">
+      <div class="inv-welcome" id="welcome">
+        <div class="loading"><span class="spinner" aria-hidden="true"></span>Loading…</div>
+      </div>
+    </div>
+    <form class="inv-compose" id="compose">
+      <input type="file" id="img-input" accept="image/*" hidden>
+      <button type="button" id="img-btn" class="inv-compose__icon live-only" title="Search by image" aria-label="Search by image">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M21 12.5 13 20.5a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L10.7 18a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <label for="input" class="visually-hidden">Your question</label>
+      <textarea id="input" rows="1" placeholder="Ask what happened…" autocomplete="off"></textarea>
+      <button type="button" id="ctx-ring" class="inv-ctx live-only" title="Conversation memory. Click to summarise earlier messages" hidden>
+        <svg viewBox="0 0 36 36" width="24" height="24" aria-hidden="true">
+          <circle class="inv-ctx__track" cx="18" cy="18" r="15"></circle>
+          <circle class="inv-ctx__fill" id="ctx-fill" cx="18" cy="18" r="15" transform="rotate(-90 18 18)"></circle>
+        </svg>
+      </button>
+      <button type="submit" id="send" class="inv-compose__send" aria-label="Send question">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 12h13m0 0-5-5m5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </form>
+  </section>
+
+  <!-- right: the recording itself; every timestamp in an answer seeks it -->
+  <aside class="rec-stage" id="rec-stage" hidden aria-label="Recording player">
+    <div class="rec-stage__player">
+      <video id="rec-video" preload="metadata" playsinline controls></video>
+      <canvas id="rec-anno" class="rec-stage__anno" aria-hidden="true"></canvas>
+    </div>
+    <div class="rec-stage__bar">
+      <span id="rec-now" class="timecode">0:00</span>
+      <span id="rec-focus" class="rec-stage__focus"></span>
+      <label class="rec-stage__toggle"><input type="checkbox" id="rec-boxes" checked> Show detections</label>
+    </div>
+    <h2 class="rec-stage__head">Evidence for the latest answer</h2>
+    <div class="rec-stage__evidence" id="rec-evidence">
+      <p class="rec-stage__empty">Ask a question. Each piece of evidence jumps the video to its moment.</p>
+    </div>
+  </aside>
+</main>
+
+<script type="module" src="js/nav.js?v=20261029r"></script>
+<script type="module">
+  // The live-camera agent (GPU server) only loads where its API exists.
+  import { getMode } from "./js/mode.js";
+  if (await getMode() === "server") import("./js/agent.js?v=20261029r");
+</script>
+<script type="module" src="js/recording-investigator.js?v=20261029r"></script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRACE · Ask what happened in your CCTV footage</title>
+<meta name="description" content="Upload a CCTV recording, ask what happened in plain English, and get answers built only from what the camera recorded, each linked to the moment in the video.">
+<script>
+  // Investigator links used to live at /?recording=<id>; send them on.
+  if (new URLSearchParams(location.search).has("recording")) {
+    location.replace("/investigate.html" + location.search + location.hash);
+  }
+</script>
+<link rel="stylesheet" href="css/app.css?v=20261029r">
+<link rel="stylesheet" href="css/trace.css?v=20261029c">
+<link rel="stylesheet" href="css/landing.css?v=20261029c">
+<link rel="icon" type="image/png" href="assets/logo.png">
+</head>
+<body class="page-landing">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="nav" id="site-nav"></header>
+
+<main id="main">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero__copy">
+      <h1 id="hero-title">Ask what happened in your CCTV footage.</h1>
+      <p class="hero__lede">
+        Upload a recording and TRACE finds every person and vehicle, follows each one with a
+        persistent ID and reads their body pose. Then ask in plain English. Every answer is built
+        from what the video measured and links to the second it describes.
+      </p>
+      <div class="hero__actions">
+        <a class="btn btn--primary btn--lg" href="/sources.html#upload">Upload a recording</a>
+        <a class="btn btn--quiet btn--lg" id="hero-continue" href="/investigate.html" hidden></a>
+      </div>
+      <ul class="hero__facts" aria-label="Where it runs">
+        <li>Runs on an ordinary laptop, no GPU needed</li>
+        <li>No cloud service and no API key</li>
+        <li>The footage never leaves the machine</li>
+      </ul>
+    </div>
+
+    <aside class="desk" aria-labelledby="desk-title">
+      <div class="desk__head">
+        <h2 id="desk-title">Recordings on this machine</h2>
+        <a href="/sources.html">Manage</a>
+      </div>
+      <div class="desk__body" id="desk-body" aria-live="polite">
+        <div class="loading"><span class="spinner" aria-hidden="true"></span>Checking for recordings…</div>
+      </div>
+    </aside>
+  </section>
+
+  <section class="band" id="how" aria-labelledby="how-title">
+    <div class="band__intro">
+      <h2 id="how-title">How an answer is built</h2>
+      <p>
+        Each video is analysed once, in the background, and the results are stored in a local
+        SQLite database. Questions are answered from those stored facts. No language model writes
+        the answers, so TRACE cannot invent a person or a moment.
+      </p>
+    </div>
+    <ol class="pipeline">
+      <li class="pipeline__stage">
+        <span class="pipeline__tick timecode" aria-hidden="true">01</span>
+        <h3>Sample</h3>
+        <p>ffmpeg reads the video at 5 frames per second.</p>
+      </li>
+      <li class="pipeline__stage">
+        <span class="pipeline__tick timecode" aria-hidden="true">02</span>
+        <h3>Detect</h3>
+        <p>YOLOX-Nano finds people, cars, trucks, motorcycles and bicycles.</p>
+      </li>
+      <li class="pipeline__stage">
+        <span class="pipeline__tick timecode" aria-hidden="true">03</span>
+        <h3>Track</h3>
+        <p>A tracker gives every object one ID for as long as it stays in view.</p>
+      </li>
+      <li class="pipeline__stage">
+        <span class="pipeline__tick timecode" aria-hidden="true">04</span>
+        <h3>Read pose</h3>
+        <p>RTMPose places 17 body joints on each person, so actions like a raised hand can be measured.</p>
+      </li>
+      <li class="pipeline__stage">
+        <span class="pipeline__tick timecode" aria-hidden="true">05</span>
+        <h3>Describe</h3>
+        <p>Rules derive colours, speed, path and events. CLIP indexes appearance for searches like “red jacket”.</p>
+      </li>
+      <li class="pipeline__stage pipeline__stage--answer">
+        <span class="pipeline__tick timecode" aria-hidden="true">06</span>
+        <h3>Answer</h3>
+        <p>Your question is matched to a search, answered from stored facts, and returned with timestamps.</p>
+      </li>
+    </ol>
+    <p class="band__note">
+      Optional: with <a href="https://ollama.com" rel="noopener">Ollama</a> and the Moondream model installed,
+      TRACE adds a one-line description of each person. It runs locally too.
+    </p>
+  </section>
+
+  <section class="band band--split" id="questions" aria-labelledby="questions-title">
+    <div class="band__intro">
+      <h2 id="questions-title">What you can ask</h2>
+      <p>
+        Questions are matched to the measurements TRACE keeps. Clicking a timestamp in an answer
+        moves the video to that moment and highlights the person or vehicle involved.
+      </p>
+      <p class="band__aside">
+        Questions about identity, age, gender or ethnicity are declined. The analysis does not
+        measure them.
+      </p>
+    </div>
+    <dl class="asks">
+      <div><dt>Overview</dt><dd>“Summarize what happened” <span>“How many people appear?”</span></dd></div>
+      <div><dt>Time</dt><dd>“What is visible at 0:30?” <span>“Who appeared first?”</span></dd></div>
+      <div><dt>A person</dt><dd>“Describe person 3”</dd></div>
+      <div><dt>Appearance</dt><dd>“Anyone in a red top?” <span>“Is anyone wearing a mask?”</span> <span>“Anyone carrying a bag?”</span></dd></div>
+      <div><dt>Movement</dt><dd>“Did anyone run?” <span>“Did anyone follow someone?”</span> <span>“Did anyone walk together?”</span></dd></div>
+      <div><dt>Body actions</dt><dd>“When did he raise his hands?” <span>“Did anyone wave, bend down, sit or fall?”</span></dd></div>
+      <div><dt>Vehicles</dt><dd>“Were any vehicles parked?”</dd></div>
+    </dl>
+  </section>
+
+  <section class="band" id="workspace" aria-labelledby="workspace-title">
+    <div class="band__intro">
+      <h2 id="workspace-title">Four views of the same recording</h2>
+      <p>
+        Every view shares one link format, <code class="timecode">?recording=&lt;id&gt;&amp;t=&lt;seconds&gt;&amp;track=&lt;n&gt;</code>,
+        so you can move between them without losing your place.
+      </p>
+    </div>
+    <div class="views">
+      <a class="view" href="/sources.html">
+        <h3>Recordings</h3>
+        <p>Upload MP4, WebM or MOV files. Analysis starts as soon as the upload finishes; re-analyse or delete at any time.</p>
+      </a>
+      <a class="view" href="/investigate.html" data-keep-recording="/investigate.html">
+        <h3>Investigate</h3>
+        <p>The chat, with the video beside it. Each piece of evidence jumps the video to its moment.</p>
+      </a>
+      <a class="view" href="/playback.html" data-keep-recording="/playback.html">
+        <h3>Playback</h3>
+        <p>The video with boxes, track numbers and skeletons drawn on it, and a timeline of every track and event.</p>
+      </a>
+      <a class="view" href="/people.html" data-keep-recording="/people.html">
+        <h3>Tracking</h3>
+        <p>One card per person or vehicle, with a replay of the path it took through the frame.</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="band band--split" id="deploy" aria-labelledby="deploy-title">
+    <div class="band__intro">
+      <h2 id="deploy-title">Two ways to run it</h2>
+      <p>
+        Laptop mode is for investigating recordings you upload. The GPU server runs the same
+        analysis on a building’s live cameras around the clock.
+      </p>
+    </div>
+    <div class="table-wrap">
+      <table class="modes">
+        <thead>
+          <tr><th scope="col"></th><th scope="col">Laptop mode</th><th scope="col">GPU server</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">For</th><td>Investigating uploaded recordings</td><td>A building’s live cameras, 24/7</td></tr>
+          <tr><th scope="row">Hardware</th><td>Any recent laptop. Tested on a 4-core i5 with 8&nbsp;GB of RAM</td><td>AMD Instinct MI300X with ROCm</td></tr>
+          <tr><th scope="row">Start with</th><td><code>run_local.ps1</code> or Docker</td><td>Docker Compose</td></tr>
+          <tr><th scope="row">Speed</th><td>An 80-second clip with 20 people analyses in about 35–40&nbsp;seconds on the test laptop</td><td>Continuous, as the cameras record</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="band band--split" id="limits" aria-labelledby="limits-title">
+    <div class="band__intro">
+      <h2 id="limits-title">Limits worth knowing</h2>
+      <p>The analysis is measurement, and measurements have edges. Check important answers against the video.</p>
+    </div>
+    <ul class="limits">
+      <li>The small detector misses very distant or heavily hidden people.</li>
+      <li>Track numbers can swap when people cross closely, and hold only within one video.</li>
+      <li>Colours are approximate; lighting changes them.</li>
+      <li>Body actions need people at least about 60&nbsp;px tall and are estimated from joint positions.</li>
+      <li>Night and infrared footage has not been tested.</li>
+    </ul>
+  </section>
+</main>
+
+<!-- sign in without leaving the home page (laptop mode, bridge/local_auth.py) -->
+<dialog class="signin" id="signin-dialog" aria-labelledby="signin-title">
+  <form class="signin__form" id="signin-form" novalidate>
+    <div class="signin__head">
+      <h2 id="signin-title">Sign in to TRACE</h2>
+      <button type="button" class="signin__close" id="signin-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <p class="signin__lede" id="signin-lede">Use the account you were given for this machine.</p>
+    <div class="field" id="si-name-field" hidden>
+      <label class="field__label" for="si-name">Your name <small>optional</small></label>
+      <input class="input" id="si-name" autocomplete="name" maxlength="80">
+    </div>
+    <div class="field">
+      <label class="field__label" for="si-username">Username</label>
+      <input class="input" id="si-username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" required>
+    </div>
+    <div class="field">
+      <label class="field__label" for="si-password">Password</label>
+      <input class="input" id="si-password" type="password" autocomplete="current-password" required>
+      <span class="field__hint" id="si-hint" hidden>At least 10 characters, different from the username.</span>
+    </div>
+    <div class="field" id="si-confirm-field" hidden>
+      <label class="field__label" for="si-confirm">Repeat password</label>
+      <input class="input" id="si-confirm" type="password" autocomplete="new-password">
+    </div>
+    <label class="signin__remember" id="si-remember-row"><input type="checkbox" id="si-remember"> Keep me signed in for 30 days</label>
+    <p class="notice notice--err" id="si-error" role="alert"></p>
+    <button class="btn btn--primary btn--lg signin__submit" type="submit" id="si-submit">Sign in</button>
+  </form>
+</dialog>
+
+<footer class="footer">
+  <div class="footer__inner">
+    <div class="footer__id">
+      <img src="assets/logo.png" alt="" width="24" height="24">
+      <span>TRACE</span>
+    </div>
+    <nav class="footer__nav" aria-label="Footer">
+      <a href="/sources.html">Recordings</a>
+      <a href="/investigate.html">Investigate</a>
+      <a href="/playback.html">Playback</a>
+      <a href="/people.html">Tracking</a>
+      <a href="#how">How it works</a>
+      <a href="#limits">Limits</a>
+    </nav>
+    <p class="footer__legal">Licensed under the PolyForm Noncommercial License 1.0.0. Models: YOLOX-Nano and RTMPose (Apache-2.0), CLIP (MIT).</p>
+  </div>
+</footer>
+
+<script type="module" src="js/nav.js?v=20261029c"></script>
+<script type="module" src="js/landing.js?v=20261029d"></script>
+</body>
+</html>

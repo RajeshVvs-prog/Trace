@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recordings · TRACE</title>
+<link rel="stylesheet" href="css/app.css?v=20261029r">
+<link rel="stylesheet" href="css/trace.css?v=20261029r">
+<link rel="stylesheet" href="css/sources.css?v=20261029r">
+<link rel="icon" type="image/png" href="assets/logo.png">
+</head>
+<body class="page-doc">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="nav" id="site-nav"></header>
+
+<main class="rec-page" id="main">
+  <header class="page-head">
+    <div>
+      <h1>Recordings</h1>
+      <p>Upload CCTV footage to analyse it on this computer. Each video is analysed once, then you can
+        investigate it, play it back with detections drawn on, and follow every tracked person or vehicle.</p>
+    </div>
+  </header>
+
+  <section class="panel" id="upload" aria-labelledby="upload-title">
+    <div class="panel__head">
+      <h2 id="upload-title">Add recordings</h2>
+      <p>MP4, WebM or MOV, up to 512&nbsp;MB each. Analysis starts as soon as an upload finishes.</p>
+    </div>
+
+    <label class="dropzone" id="dropzone" for="video-files">
+      <input id="video-files" class="visually-hidden" type="file"
+             accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" multiple>
+      <svg class="dropzone__icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+        <path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"
+              fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <strong>Drop video files here, or <span class="dropzone__link">choose files</span></strong>
+      <span>You can add several at once and describe each before uploading.</span>
+    </label>
+
+    <div class="queue" id="queue" hidden>
+      <div class="queue__bar">
+        <strong id="selected-files-count"></strong>
+        <button class="btn btn--sm" id="add-more-recordings" type="button">Add more files</button>
+      </div>
+      <div class="queue__list" id="upload-list"></div>
+      <div class="queue__actions">
+        <button class="btn btn--primary" id="upload-button" type="button" disabled>Upload and analyse</button>
+        <span class="queue__note" id="upload-note" aria-live="polite"></span>
+      </div>
+    </div>
+    <p class="notice" id="file-message" role="status"></p>
+  </section>
+
+  <section class="panel live-only" aria-labelledby="live-title">
+    <div class="panel__head">
+      <h2 id="live-title">Live cameras</h2>
+      <p>On the GPU server, live NVR channels and extra RTSP cameras are configured on the
+        <a href="/settings.html">Settings</a> page and analysed continuously.</p>
+    </div>
+  </section>
+
+  <section class="library" aria-labelledby="library-title">
+    <div class="library__head">
+      <h2 id="library-title">On this machine</h2>
+      <span class="library__count" id="library-count"></span>
+    </div>
+    <div id="recording-sources" aria-live="polite">
+      <div class="loading"><span class="spinner" aria-hidden="true"></span>Loading recordings…</div>
+    </div>
+  </section>
+</main>
+
+<script type="module" src="js/nav.js?v=20261029r"></script>
+<script type="module" src="js/sources.js?v=20261029r"></script>
+</body>
+</html>

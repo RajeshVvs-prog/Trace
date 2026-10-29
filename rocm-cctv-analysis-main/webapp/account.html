@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Account · TRACE</title>
+<link rel="stylesheet" href="css/app.css?v=20261029a">
+<link rel="stylesheet" href="css/trace.css?v=20261029a">
+<link rel="stylesheet" href="css/sources.css?v=20261029a">
+<link rel="stylesheet" href="css/account.css?v=20261029a">
+<link rel="icon" type="image/png" href="assets/logo.png">
+</head>
+<body class="page-doc">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="nav" id="site-nav"></header>
+
+<main class="rec-page acct" id="main">
+  <header class="page-head">
+    <div>
+      <h1>Account</h1>
+      <p id="acct-who">Loading…</p>
+    </div>
+  </header>
+
+  <section class="panel" aria-labelledby="pw-title">
+    <div class="panel__head">
+      <h2 id="pw-title">Change password</h2>
+      <p>Changing it signs out your other sessions.</p>
+    </div>
+    <form class="acct-form" id="pw-form" novalidate>
+      <div class="field">
+        <label class="field__label" for="pw-current">Current password</label>
+        <input class="input" id="pw-current" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="field">
+        <label class="field__label" for="pw-new">New password</label>
+        <input class="input" id="pw-new" type="password" autocomplete="new-password" required minlength="10">
+        <span class="field__hint">At least 10 characters.</span>
+      </div>
+      <div class="field">
+        <label class="field__label" for="pw-confirm">Repeat new password</label>
+        <input class="input" id="pw-confirm" type="password" autocomplete="new-password" required>
+      </div>
+      <div class="acct-form__actions">
+        <button class="btn btn--primary" type="submit">Change password</button>
+      </div>
+      <p class="notice" id="pw-msg" role="status"></p>
+    </form>
+  </section>
+
+  <section class="panel" id="people" aria-labelledby="people-title" hidden>
+    <div class="panel__head">
+      <h2 id="people-title">People with access</h2>
+      <p>Everyone listed here can sign in to TRACE on this machine and see all of its recordings.</p>
+    </div>
+    <div id="user-list" class="acct-users" aria-live="polite"></div>
+
+    <form class="acct-form acct-form--add" id="add-form" novalidate>
+      <h3>Add a person</h3>
+      <div class="acct-form__grid">
+        <div class="field">
+          <label class="field__label" for="add-name">Name <small>optional</small></label>
+          <input class="input" id="add-name" maxlength="80" autocomplete="off">
+        </div>
+        <div class="field">
+          <label class="field__label" for="add-username">Username</label>
+          <input class="input" id="add-username" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+        </div>
+        <div class="field">
+          <label class="field__label" for="add-password">Temporary password</label>
+          <input class="input" id="add-password" type="text" autocomplete="off" required minlength="10">
+          <span class="field__hint">At least 10 characters. Share it privately; they can change it after signing in.</span>
+        </div>
+      </div>
+      <label class="login__remember"><input type="checkbox" id="add-admin"> Administrator (can add and remove people)</label>
+      <div class="acct-form__actions">
+        <button class="btn btn--primary" type="submit">Add person</button>
+      </div>
+      <p class="notice" id="add-msg" role="status"></p>
+    </form>
+  </section>
+</main>
+
+<script type="module" src="js/nav.js?v=20261029a"></script>
+<script type="module" src="js/account.js?v=20261029a"></script>
+</body>
+</html>
