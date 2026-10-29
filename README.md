@@ -1,551 +1,128 @@
-# ROCm-ccvt-anlysis
+# TRACE
 
-CCTV monitoring with live AI object detection, in one system, run as one
-Docker Compose stack behind a single port. The whole AI stack runs on a
-single **AMD Instinct MI300X** (~191 GB VRAM, ROCm) — detection, tracking,
-cross-camera ReID, face, plate, and the vision-language model all share
-that one GPU.
+**Ask what happened in your CCTV footage, and get answers built only from what the camera recorded.**
 
-- **Proxy** (Caddy) — the only published port (:8080); routes `/ws` to the
-  bridge and everything else to the gateway.
-- **Gateway** (go2rtc) — pulls every NVR camera once; serves the web UI and
-  video (H.264 passthrough, MSE) and an internal RTSP re-stream for the AI.
-- **AI detector** (`airocm`) — **RT-DETR R50** (Apache-2.0) as ONNX, run via
-  **onnxruntime-migraphx** on the MI300X, plus a clean-room **BoT-SORT**
-  tracker (Kalman + IoU two-stage) with **OSNet** appearance ReID — all in
-  one Python service (`ai_rocm/airocm.py`).
-- **Bridge** — receives detections, archives to JSONL, broadcasts to
-  browsers over WebSocket.
-- **Web UI** — white industrial theme; detection boxes are a canvas
-  overlay drawn in the browser (the video itself stays clean).
+Upload a recording, and TRACE finds every person and vehicle, follows each one
+with a persistent ID, reads their body pose, and lets you investigate in plain
+English: *"Did anyone run?"*, *"When did he raise his hands?"*, *"Is anyone
+wearing a mask?"*. Every answer comes with timestamps you can click to jump
+the video to that moment.
 
-```
-                          single public port
-browser ──────────────► proxy :8080 ─┬─ /ws ──► bridge ◄── detections ─┐
-                                     └─ (rest) ► gateway               │
-                                                  │  ▲                 │
-camera source (see modes) ── one conn/camera ─────┘  │                 │
-                                                     └ RTSP re-stream ▼
-                                       AI detector (airocm, RT-DETR on ROCm)
+It runs on an ordinary laptop: no GPU required, no cloud, no API key, and the
+footage never leaves the machine.
 
-internal compose network: gateway:1984/8554, bridge:8081 — no host ports
-detections archive: output/detections.jsonl
-```
+All code lives in [`rocm-cctv-analysis-main/`](rocm-cctv-analysis-main/).
 
-## Quick start
+## Two ways to run it
 
-You need an **AMD Instinct GPU host with ROCm installed** (`/opt/rocm`) and
-**Docker + Docker Compose**. Nothing in `docker-compose*.yml` is machine-specific —
-the ROCm device mounts (`/dev/kfd`, `/dev/dri`, `/opt/rocm`) are the same on every
-AMD host, so you do **not** edit any compose or Dockerfile. Only two things are
-per-deployment: your config and the model weights.
+| | Laptop mode | GPU server |
+|---|---|---|
+| For | Investigating uploaded recordings | A building's live cameras, 24/7 |
+| Hardware | Any recent laptop (tested: 4-core i5, 8 GB RAM) | AMD Instinct MI300X with ROCm |
+| Start | `run_local.ps1`, or Docker | Docker Compose |
+| Guide | [Laptop mode](#quick-start-laptop) below | [Full server documentation](rocm-cctv-analysis-main/README.md) |
 
-```bash
-# 1. get the code
-git clone <this-repo> && cd <repo>
+## Quick start (laptop)
 
-# 2. your settings (cameras, credentials, OAuth) — never committed
-cp config.example.yaml config.local.yaml
-$EDITOR config.local.yaml
-
-# 3. model weights (not in git — too large; see "Models")
-bash download_models.sh
-
-# 4. generate the runtime configs from config.local.yaml
-./configure.py
-
-# 5. build the images from source and start everything
-docker compose up -d --build
-```
-
-Open **http://\<host\>:8080** — the only port. First build compiles the RT-DETR
-MIGraphX cache (~9 min once). That's it — every container is rebuilt from this
-repo, so you never need anyone else's images.
-
-## CPU/public-test deployment and uploaded-video investigation
-
-The repository also includes a CPU-only stack for laptops without a ROCm-capable
-GPU. This is the supported local configuration used for development and
-recorded-video testing on Windows:
+You need Python 3.10 or newer and ffmpeg on your `PATH`. From `rocm-cctv-analysis-main/`:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File run_local.ps1
+```
+
+Open <http://localhost:8080>, upload a video on **Camera Sources**, and click
+**Investigate** when analysis finishes. The first run creates a virtual
+environment and downloads about 170 MB of models.
+
+**With Docker instead** (needs about 4 GB of free RAM):
+
+```bash
+python scripts/get_models.py
 docker compose -f docker-compose.public-test.yml up -d --build
 ```
 
-Open <http://localhost:8080>. The public-test stack uses SQLite under
-`output/public-test.db`, serves the web application through Caddy, and mounts
-the local `ai/models` directory into the bridge for CPU video analysis. The
-bridge upload limit and proxy request-body limit are both 512 MB. Do not place
-credentials or model weights in Git.
+**Optional captions:** install [Ollama](https://ollama.com) and run
+`ollama pull moondream`. TRACE uses it automatically when it is running, on
+the GPU if the NVIDIA driver is recent (531 or newer), otherwise on the CPU.
 
-The local workflow is:
-
-1. Open **Camera Sources** (`/sources.html`) and upload a playable MP4.
-2. Confirm the file appears under **Uploaded Recordings**.
-3. Start analysis and wait for the persisted status to become **Analysis
-   completed** or **Analysis failed**.
-4. Open **Playback** (`/playback.html`) to play the actual uploaded file.
-5. Open **Investigator** (`/`) or the recording's **Investigate** link to ask
-   questions about that recording's persisted detections.
-6. Use timestamp evidence links to seek the selected recording where supported.
-
-Uploaded recordings remain distinct from live RTSP cameras. The application
-does not pretend an uploaded file is a live stream, and the CPU detector stores
-an unknown tracking ID when persistent tracking has not been produced.
-
-### Uploaded-recording API
-
-The recording workflow is served by the bridge and routed through the proxy:
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `POST` | `/api/uploads` | Upload a video and required recording metadata |
-| `GET` | `/api/uploads` | List server-persisted recordings and processing status |
-| `GET` | `/api/uploads/{id}/file` | Stream the saved video with range support |
-| `POST` | `/api/uploads/{id}/analyze` | Queue asynchronous CPU analysis |
-| `GET` | `/api/uploads/{id}/analysis` | Read processing status, progress, and errors |
-| `GET` | `/api/uploads/{id}/detections` | Read timestamped persisted detections |
-| `GET` | `/api/uploads/{id}/investigation` | Read recording-scoped chat history |
-| `POST` | `/api/uploads/{id}/investigation` | Ask an evidence-grounded question |
-| `GET` | `/api/uploads/{id}/tracking` | Read recorded observations and tracking limitations |
-
-The first investigation implementation is deliberately API-key-free and
-deterministic: it answers from persisted detector observations and timestamps.
-It does not claim full video understanding and reports when the available
-evidence cannot establish identity, routes, colors, room semantics, or
-unobserved actions.
-
-### Local verification
-
-From the repository root, the following checks validate the frontend and
-running public-test service without rebuilding containers:
-
-```powershell
-node --check .\webapp\js\app.js
-node --check .\webapp\js\agent.js
-python -m py_compile .\bridge\bridge.py .\bridge\sqlite_store.py .\bridge\video_analysis.py
-git diff --check
-Invoke-WebRequest http://localhost:8080/api/health
-Invoke-WebRequest http://localhost:8080/api/uploads
-```
-
-## The AI services (all on the MI300X)
-
-| Service | What it does | How it runs |
-|---|---|---|
-| `airocm` | detection + in-camera tracking | RT-DETR R50 ONNX via onnxruntime-migraphx; BoT-SORT + OSNet ReID in Python |
-| `siglip` | cross-camera ReID (Global IDs, sightings) | YoutuReID embedder (Apache-2.0) via onnxruntime-migraphx |
-| `face` | face detection + recognition | cvlface ONNX on MIGraphX + MediaPipe alignment (CPU) |
-| `plate` | licence-plate read | plate detector on MIGraphX + PaddleOCR (CPU) |
-| `vllm` | vision-language + LLM backend | vLLM (ROCm) serving Google Gemma 4 31B at bf16 |
-| `vlmscan` | video captioning | drives the VLM over the vLLM API |
-
-GPU access is via the `/dev/kfd` + `/dev/dri` device mounts and the host's
-`/opt/rocm` bind-mounted read-only — no vendor container runtime is needed.
-The detector pushes person crops to `siglip` for Global-ID assignment; each
-GPU service persists its compiled MIGraphX cache (`.mxr`) so restarts skip
-the first-boot compile.
-
-## AI Investigator, Tracking & Playback
-
-Three operator apps sit on top of the pipeline — all served from the same
-single port, all powered by the on-box models:
-
-- **Tracking** (`/people.html`) — every person the system linked across cameras
-  into a **Global ID**, with their snapshots, cross-camera route, a per-minute
-  behaviour story, and a search box ("green shirt", "G398", a camera name).
-  Identities are decided by the **VLM's clothing description** (colour, garment,
-  silhouette) — a link a human can read and vouch for, not a black-box vector.
-
-- **Investigator** (`/`) — a chat where you ask in plain English (or Thai) and
-  the assistant *investigates*: it calls tools over the recorded data (who was
-  where and when, find a person by looks, count objects, pull a clip, draw a
-  chart, read the camera map) and answers with evidence. Built to be reliable on
-  a **small 31B model**: the intelligence lives in **"fat tools"** (the logic is
-  in code, not the prompt), a **deterministic grounding gate** rejects any
-  invented id/time, and a **verifier agent** re-checks every answer. It never
-  dead-ends — an empty result comes back with the nearest times that *do* have
-  data and how far back the records go.
-
-- **Playback** (`/playback.html`) — recorded footage with a scrub timeline and
-  event markers, plus a plain-language search that jumps to the moment ("a group
-  of people on bicycles") and a "move to the storage room" command that switches
-  cameras for you.
+## How it works
 
 ```
-                    ┌─────────────────────────────────────────────┐
-  operator ───────► │  Investigator chat   Tracking   Playback     │  web UI
-                    └───────────────┬─────────────────────────────-┘
-                                    │ tools (search people / objects / clips…)
-                                    ▼
-        detections · sightings · behaviours · captions   (ClickHouse + files)
-                                    ▲
-        RT-DETR detection · BoT-SORT tracking · VLM tags · Global-ID ReID
-                                    ▲
-                        one AMD Instinct MI300X (ROCm)
+UPLOAD ─► ANALYSIS (once per video, in the background)
+            ffmpeg ─────── 5 frames per second
+            YOLOX-Nano ─── people, cars, trucks, motorcycles, bicycles
+            tracker ────── one persistent ID per object
+            RTMPose ────── 17 body joints per person
+            rules ──────── colours, speed, path, actions, events
+            CLIP ───────── appearance search ("red jacket", "white bag")
+            Moondream ──── optional one-line descriptions
+         ─► SQLite
+         ─► QUESTION ─► investigator: picks the matching search, fills an
+                        answer from stored facts, attaches timestamps
 ```
 
-## Camera source: two modes
+No language model writes the answers, so TRACE cannot invent a person or a
+moment. Every sentence traces back to something measured in the video.
 
-The gateway can pull cameras from two places, chosen per machine with
-`gateway.upstream` in `config.local.yaml`:
+## What you can ask
 
-| | `direct` | `forwarder` |
-|---|---|---|
-| When | machine can reach the CCTV subnet (`ping 192.168.0.163` works) | plain LAN client (ping fails) |
-| Streams from | the NVRs themselves | an upstream go2rtc relay at `192.168.1.151:8554` |
-| Credentials | in this machine's `config.local.yaml` | only on the relay |
-
-Everything downstream (AI, UI, bridge, stream names, output) is identical
-in both modes. To switch: edit `upstream:`, then
-`./configure.py && docker compose up -d --force-recreate gateway`.
-Migration details: [AI_SERVER_CHANGES.md](AI_SERVER_CHANGES.md).
-
-## Setup (once)
-
-```bash
-cp config.example.yaml config.local.yaml   # credentials + upstream mode
-./configure.py                             # generate runtime configs
-```
-
-Requires: Docker + a working ROCm install on the host (`/opt/rocm`).
-
-### Portable CPU detection (Milestone A)
-
-The detector now supports runtime backend selection. Set
-`INFERENCE_BACKEND=cpu` to use the standard ONNX Runtime CPU provider, or leave
-it as `auto` to prefer MIGraphX when it is available and otherwise use CPU.
-The ROCm deployment remains unchanged when `INFERENCE_BACKEND=rocm` is used.
-
-For a laptop or recorded-video trial, build the CPU image rather than the
-ROCm Compose override:
-
-```powershell
-docker build -f ai_rocm/Dockerfile.cpu -t ccvt-airocm-cpu ai_rocm
-docker run --rm `
-  -e INFERENCE_BACKEND=cpu `
-  -e RTDETR_ONNX=/app/models/rtdetr_r50_uint8.onnx `
-  -v "${PWD}\ai\models:/app/models:ro" `
-  -v "${PWD}\sample.mp4:/app/sample.mp4:ro" `
-  ccvt-airocm-cpu --video /app/sample.mp4 --fps 2 --no-post
-```
-
-The recorded-video path performs genuine model inference and exits when the
-file ends. It does not create fake events and does not require a camera,
-ClickHouse, bridge, vLLM, ROCm, or an API key. The existing RT-DETR model must
-be downloaded and validated first; model compatibility and laptop performance
-are hardware-dependent and are not assumed by this command.
-
-For portable event history, run the bridge with `CCVT_STORAGE=sqlite`.
-`CCVT_SQLITE_PATH` controls the database location. SQLite currently persists
-detections and poses and powers the history, playback-window, timeline-summary
-and statistics endpoints; ReID, face, plate and investigator tables remain
-ClickHouse-backed until their dedicated portable adapters are implemented.
-
-### Portable dashboard preview
-
-The existing dashboard can be opened without ClickHouse, ROCm, vLLM or camera
-hardware using the CPU Compose file:
-
-```powershell
-docker compose -f docker-compose.cpu.yml up -d --build
-Start-Process http://localhost:8080
-```
-
-This serves the existing web UI and enables SQLite-backed history endpoints.
-Live camera tiles return an explicit unavailable status because no gateway or
-camera source is started by this profile. The minimal image also omits ffmpeg,
-so server-side frame extraction from recordings is unavailable in this
-dashboard-only profile. Stop it with:
-
-```powershell
-docker compose -f docker-compose.cpu.yml down
-```
-
-### Public RTSP stream smoke test
-
-For a laptop-only live-stream test, the repository includes an isolated
-Wowza RTSP test stack. It tests camera transport and the dashboard without
-using the production ROCm compose files or the private NVR configuration:
-
-```powershell
-docker compose -f docker-compose.public-test.yml up -d --build
-Start-Process http://localhost:8080
-```
-
-The stream is proxied by go2rtc as `public_ch01_sub`. The gateway must show
-received packets before the browser can display video:
-
-```powershell
-docker exec ccvt-gateway-public-test wget -qO- http://127.0.0.1:1984/api/streams
-```
-
-This test stack does not bypass authentication or access controls on private
-cameras; it uses only the public stream published by Wowza for testing.
-
-CPU detection is opt-in and uses the downloaded Apache-2.0 YOLOX-Nano model
-at `ai\models\yolox_nano.onnx`:
-
-```powershell
-docker compose -f docker-compose.public-test.yml --profile detector up -d --build
-docker compose -f docker-compose.public-test.yml logs -f detector
-```
-
-The portable detector samples the stream at two frames per second and reports
-people, bicycles, cars, motorcycles, and trucks to the SQLite-backed bridge.
-The production RT-DETR/ROCm detector is unchanged.
-
-Stop the smoke-test stack with:
-
-```powershell
-docker compose -f docker-compose.public-test.yml down
-```
-
-To run genuine CPU detection against a recorded file, create
-`video\input.mp4`, place the validated RT-DETR model at
-`ai\models\rtdetr_r50_uint8.onnx`, then start the opt-in detector profile:
-
-```powershell
-docker compose -f docker-compose.cpu.yml --profile detector up -d --build
-docker compose -f docker-compose.cpu.yml logs -f detector
-```
-
-The detector sends records to the bridge at `/ingest`; the bridge persists them
-to `output\ccvt.db`, and the dashboard's history/statistics APIs can read them.
-The detector is a finite batch job: when the video ends, its container exits.
-Missing model or video files cause an explicit startup error; no placeholder
-events are generated.
-
-Validate the model before starting detection:
-
-```powershell
-docker build -f ai_rocm/Dockerfile.cpu -t ccvt-airocm-cpu ai_rocm
-docker run --rm `
-  --entrypoint python `
-  -v "${PWD}\ai\models:/models:ro" `
-  ccvt-airocm-cpu `
-  python model_check.py /models/rtdetr_r50_uint8.onnx --backend cpu
-```
-
-The command reports the SHA-256 digest, selected ONNX Runtime provider, input
-shape and output shapes. A missing, truncated or CPU-incompatible model fails
-before any video is processed.
-
-### Models
-
-Model weights are **not committed** (they are large — the RT-DETR detector alone
-is ~160 MB, over GitHub's per-file limit). Fetch them with:
-
-```bash
-MODELS_URL="https://github.com/<owner>/<repo>/releases/download/models-v1/models.tar.gz" \
-  bash download_models.sh
-```
-
-The maintainer publishes the weights as a **GitHub Release** asset
-(`models.tar.gz`, ~200 MB — build it with `tar -czf models.tar.gz ai/models
-face/models plate/models` and attach it to a release). The files it contains,
-each a standard public checkpoint:
-
-| Path | Model |
+| Kind | Examples |
 |---|---|
-| `ai/models/rtdetr_r50_uint8.onnx` | RT-DETR R50 detector (Apache-2.0) |
-| `ai/models/face_detection_yunet_2023mar.onnx` | YuNet face detector |
-| `face/models/recognition.onnx`, `face/models/face_landmarker.task` | face recognition + MediaPipe landmarker |
-| `plate/models/…` | plate detector (YOLOv9-t) + PaddleOCR |
-| `output/siglip/cache/reid/youtureid.onnx` | YoutuReID embedder (auto-downloaded on first boot) |
+| Overview | "Summarize what happened", "How many people appear?" |
+| Time | "What is visible at 0:30?", "Who appeared first?" |
+| A person | "Describe person 3" |
+| Appearance | "Anyone in a red top?", "Is anyone wearing a mask?", "Anyone carrying a bag?" |
+| Movement | "Did anyone run?", "Did anyone stop?", "Did anyone follow someone?", "Did anyone walk together?" |
+| Body actions | "When did he raise his hands?", "Did anyone wave, bend down, sit or fall?" |
+| Vehicles | "Were any vehicles parked?" |
 
-The RT-DETR model is compiled to a MIGraphX cache on the detector's first boot
-(~9 min once; ~5 s from cache after).
+Questions about identity, age, gender or ethnicity are declined.
 
-## Run
+## Pages
 
-All commands from the repo root:
-
-```bash
-docker compose up -d        # start everything
-docker compose down         # stop everything
-docker compose restart      # restart everything
-docker compose ps           # status of the services
-docker compose logs -f airocm   # follow detector logs (proxy|gateway|bridge|airocm|siglip|...)
-rocm-smi                    # MI300X utilization / VRAM / power
-```
-
-Web UI: http://\<host\>:8080 — that's the only port; open it in ufw /
-Cloudflare and you're done. Services restart automatically (crash or
-reboot) thanks to `restart: unless-stopped`.
-
-Health checks: `tail -f output/detections.jsonl` (records should keep
-appearing), and in the UI header the Gateway and AI detector LEDs
-should both be green.
-
-## Configuration & secrets
-
-All machine-specific settings live in **`config.local.yaml`** (NVRs, camera
-credentials, Google OAuth, upstream mode, detector classes/thresholds). It is
-**git-ignored** — copy the template and fill it in:
-
-```bash
-cp config.example.yaml config.local.yaml   # then edit: cameras + credentials
-./configure.py                             # regenerate the runtime configs
-docker compose up -d --force-recreate gateway airocm
-```
-
-`./configure.py` regenerates `gateway/go2rtc.yaml`, `webapp/config.json` and
-`ai/configs/cameras.yaml` from it. Those generated files are **git-ignored too**
-(they embed camera RTSP credentials), so every deployment produces its own —
-never edit a generated file by hand. Webapp files are served straight from
-disk: UI tweaks only need a browser refresh.
-
-AI model providers/keys live in **`output/ai_settings.json`** (also git-ignored);
-see **`ai_settings.example.json`** for the shape. The default provider is the
-**on-box Gemma** (no key needed) — a cloud key (Anthropic/Google) is only
-required if you deliberately switch to a cloud model.
-
-> **Secrets never enter this repo.** `config.local.yaml`, `gateway/go2rtc.yaml`,
-> `auth/.state/` and `output/ai_*.json` are all git-ignored. If you fork it,
-> keep them that way — and rotate any key that was ever committed.
-
-## Login (Google sign-in)
-
-With `auth.enabled: true` in `config.local.yaml`, the proxy requires a
-Google sign-in for every page and stream; only `allowed_emails` /
-`allowed_domains` get in. Sessions are signed cookies (7 days); the ☰
-menu in the header shows the signed-in account and sign-out.
-
-- Register `https://<public-host>/auth/google/callback` as an Authorized
-  redirect URI on the Google OAuth client.
-- `skip_lan: true` (default) lets LAN/localhost in without login — Google
-  forbids http redirect URIs on private IPs; the gate protects the
-  public (Cloudflare) hostname, ufw protects the LAN.
-
-## Recording & playback
-
-The `recorder` service records **every camera continuously** (H.264
-stream copy, no transcode, no audio) into 60s MP4 segments under
-`recordings/<camera>/`, keeping **24 hours** (sub-stream quality ≈
-60–65 GB/day for 28 cameras). Browse it at **/playback.html**: camera +
-date, hour grid, minute segments, auto-advancing player. Tuning knobs
-in docker-compose.yml: `RETENTION_HOURS`, `RECORDER_PROFILE`
-(`sub`/`main` — main is ~10× the storage).
-
-## Detection output
-
-`output/detections.jsonl`, one record per tracked object per frame:
-
-```json
-{"camera_id":"nvr1_ch03","timestamp":"2026-07-03T09:00:00.123+07:00",
- "class_name":"person","confidence":0.87,
- "bounding_box":{"x":412.0,"y":233.5,"w":58.2,"h":141.0},
- "frame":{"width":960,"height":544,"number":1234},"track_id":17}
-```
-
-Boxes are pixels in the AI processing frame; normalize by
-`frame.width/height` to map onto any view. The same records stream live on
-`ws(s)://<host>/ws` (via the proxy). `track_id` is the in-camera BoT-SORT
-track; cross-camera Global IDs come from the `siglip` service.
-
-## 3D Map — camera calibration with MapAnything (step toward a digital twin)
-
-A scan captures one sharp **main-stream** frame per camera and reconstructs
-all cameras jointly in **metric 3D** with
-[MapAnything](https://github.com/facebookresearch/map-anything)
-(Meta's feed-forward multi-view reconstruction transformer), on the
-**MI300X**. We load the **`facebook/map-anything-apache`** checkpoint —
-Apache-2.0, commercially clean (the default checkpoint is CC-BY-NC; do not
-switch to it).
-
-This replaced the earlier SuperPoint+LightGlue+COLMAP SfM path (`hloc`),
-which registered only 2/27 cameras on this building's wide-baseline,
-low-texture, repetitive indoor views. MapAnything is feed-forward (no
-matching/triangulation), predicts a pose + per-pixel metric 3D points for
-*every* view, and outputs real-world scale in metres.
-
-Start a scan with the **▶ Run scan** button on **/map3d.html** (live
-progress bar, page refreshes itself when done) or from a terminal:
-
-```bash
-bash scripts/run_calib.sh       # same trigger via the API, with progress
-```
-
-The `calib` container idles as a tiny control server (`/api/calib/run`,
-`/api/calib/status`, `/api/calib/floors`); GPU memory is only used while a
-scan runs. First run downloads the model weights into `output/calib/cache`.
-
-Results at **/map3d.html**: dense textured **mesh** (demo-style, per-view
-triangulated depth maps in `result/scene.glb`) plus the metric point
-cloud and camera poses. Viewer controls: mesh/points display mode,
-**alpha** (opacity), **per-floor filter**, point size, per-point
-confidence threshold, colour modes (true colour / confidence / height /
-floor). Also a per-pair **mutual frustum overlap** matrix, a table with
-per-view validity, and thumbnails with model-invalid pixels dimmed.
-
-**/demo3d.html — Demo 3D map**: upload your own images or a video of any
-scene (one frame sampled every N seconds, 0.02–10 s adjustable like the
-official demo; no fixed view limit — hundreds of views auto-switch to
-memory-efficient inference), press Reconstruct, and explore the dense
-mesh in the same viewer. Save/download buttons archive the video and the
-resulting .glb on the server (`output/calib/saved/`) or download them.
-Dropping a **.glb** file just displays it (browser-side only).
-
-**Walkthrough aid videos:** film a floor with a phone (walk slowly, include
-what the CCTV cameras see) and upload it on the page assigned to that
-floor — the next scan reconstructs those frames together with the CCTV
-views, giving the model the moving-camera structure the fixed views lack.
-Detail level per scan: standard / fine / extremely fine (518/1036/1554 px
-inference). After a scan, any view (CCTV or aid) can be manually adjusted
-in the viewer: pick it in "adjust view" and use W/A/S/D + Q/E to move,
-arrow keys to rotate, R to reset — changes render live and persist on the
-server (`output/calib/adjust.json`).
-
-**Per-floor layout (defeats perceptual aliasing):** floors 2–8 have
-identical-looking corridors, and a joint reconstruction merges those
-clones into one volume. So the scan reconstructs **each floor's cameras
-independently** (grouping from `calib/floors.json`, editable on the page),
-levels every group to its RANSAC-detected ground plane, and stacks the
-groups at `floor_height_m` (default 3 m) per storey. In-floor geometry is
-model-measured; vertical placement is ground truth. Overlap is computed
-within a floor only. A walkthrough capture pass can later replace the
-assumed stacking with measured stairwell geometry for the full twin.
-
-## Repo layout
-
-| Path | What |
+| Page | What it does |
 |---|---|
-| `docker-compose.yml` + `docker-compose.override.yml` | the whole stack; the override carries the AMD/ROCm device mounts and MIGraphX settings |
-| `configure.py`, `config.example.yaml` | single-source-of-truth config |
-| `proxy/Caddyfile` | single-port routing |
-| `gateway/` | generated go2rtc stream config |
-| `webapp/` | UI (plain HTML/CSS/JS, canvas overlay for AI boxes) |
-| `bridge/` | FastAPI detections bridge + playback/faces APIs |
-| `recorder/` | continuous segment recorder (ffmpeg, 24h retention) |
-| `ai_rocm/` | `airocm.py` — RT-DETR detector + BoT-SORT/OSNet tracker |
-| `ai/` | detector models (`models/`), camera configs, detector docs |
-| `siglip/`, `face/`, `plate/`, `vlmscan/` | ReID, face, plate, video-captioning services |
-| `calib/` | MapAnything metric calibration job (3D Map) |
-| `scripts/` | ops helpers (`run_calib.sh`, benchmarks, backfills) |
+| **Camera Sources** | Upload videos; analysis starts automatically; re-analyse or delete |
+| **Investigator** | The chat, with the video beside it; evidence jumps the video |
+| **Playback** | The video with boxes, track numbers and skeletons, plus a timeline of tracks and actions |
+| **Tracking** | A card per person or vehicle, with a replay of their path |
 
-## Notes
+Every page shares one link format, `?recording=<id>&t=<seconds>&track=<n>`,
+so you can move between pages without losing your place.
 
-- **Cloudflare Tunnel**: point one route at `http://localhost:8080` —
-  nothing else. (A separate `/ws` route is no longer needed; delete it
-  if present, since port 8081 is not published anymore.)
-- **GPU access**: every GPU service mounts `/dev/kfd` + `/dev/dri` and the
-  host's `/opt/rocm` (read-only) — the image itself carries no ROCm, so the
-  userspace always matches the host amdgpu driver. No vendor container
-  runtime is involved.
-- The AI reads cameras via the gateway's internal RTSP re-stream —
-  one NVR connection per camera total; credentials only in the gateway
-  config. To expose RTSP to other tools, add `- "8554:8554"` under the
-  gateway service.
-- First `docker compose up` builds the service images and pulls
-  caddy/go2rtc. The detector compiles its RT-DETR MIGraphX cache on first
-  boot (~9 min) and loads it in a few seconds on every boot after.
+## Models
 
-## License
+| Model | Size | Licence | Job |
+|---|---|---|---|
+| YOLOX-Nano | 3.5 MB | Apache-2.0 | Detect people and vehicles |
+| RTMPose-tiny | 13 MB | Apache-2.0 | Body joints for actions |
+| CLIP ViT-B/32, quantized | ~150 MB | MIT | Text-to-image appearance search |
+| Moondream (via Ollama) | 1.7 GB | Apache-2.0 | Optional descriptions |
 
-**PolyForm Noncommercial License 1.0.0** — see [LICENSE.md](LICENSE.md).
+The tracker and action rules are plain code, not models. Measured on the test
+laptop: an 80-second clip with 20 people analyses in about 35 to 40 seconds;
+pose costs about 10 ms per person; Moondream takes about 17 s per image on CPU.
 
-You may use, modify, share and build on this project for any **non‑commercial**
-purpose (study, research, personal projects, non‑profit / educational / public‑
-safety organizations). **Commercial use is not granted** by this license. For a
-commercial license, contact the copyright holder.
+## Testing
+
+With the app running:
+
+```bash
+python rocm-cctv-analysis-main/scripts/e2e_local.py path/to/clip.mp4
+```
+
+It uploads the clip and runs 37 checks across analysis, tracks, pose, events,
+search, chat, history, pages and deletion, then deletes the test recording.
+
+## Limits
+
+- The small detector misses very distant or heavily hidden people.
+- Track numbers can swap when people cross closely, and hold only within one video.
+- Colours are approximate; lighting changes them.
+- Body actions need people at least about 60 px tall and are estimated from joint positions.
+- Night and infrared footage has not been tested.
+
+## Licence
+
+PolyForm Noncommercial License 1.0.0. See
+[`rocm-cctv-analysis-main/LICENSE.md`](rocm-cctv-analysis-main/LICENSE.md).
