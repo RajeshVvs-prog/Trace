@@ -1,6 +1,14 @@
-# ROCm-ccvt-anlysis
+# TRACE (ROCm-ccvt-analysis)
 
-CCTV monitoring with live AI object detection, in one system, run as one
+TRACE runs in two modes:
+
+- **Laptop mode** investigates uploaded recordings on an ordinary computer:
+  no GPU, no cloud, no API key. Start with
+  [Laptop mode](#laptop-mode-no-gpu-no-docker-no-api-key) below.
+- **GPU server mode**, described in the rest of this section, watches a
+  building's live cameras around the clock.
+
+In GPU server mode, CCTV monitoring with live AI object detection runs as one
 Docker Compose stack behind a single port. The whole AI stack runs on a
 single **AMD Instinct MI300X** (~191 GB VRAM, ROCm) — detection, tracking,
 cross-camera ReID, face, plate, and the vision-language model all share
