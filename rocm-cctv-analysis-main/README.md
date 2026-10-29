@@ -62,6 +62,123 @@ Open **http://\<host\>:8080** — the only port. First build compiles the RT-DET
 MIGraphX cache (~9 min once). That's it — every container is rebuilt from this
 repo, so you never need anyone else's images.
 
+## Laptop mode: no GPU, no Docker, no API key
+
+This is the configuration used for the hackathon build. It runs on an ordinary
+Windows laptop (tested on a 4-core i5 with 8 GB RAM) and investigates
+**uploaded recordings**. Live cameras and the MI300X services are not needed.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run_local.ps1
+```
+
+Open <http://localhost:8080>. The script creates `.venv`, installs
+`requirements.local.txt`, downloads YOLOX-Nano (3.5 MB) if missing, and starts
+the bridge with SQLite (`output/trace.db`). ffmpeg must be on `PATH`.
+Models download through `scripts/get_models.py` (about 170 MB the first time).
+
+Optional models:
+
+| Model | Where | What it adds |
+|---|---|---|
+| CLIP ViT-B/32, quantized ONNX (~150 MB) | `ai/models/clip/` (`vision_model_quantized.onnx`, `text_model_quantized.onnx`, `tokenizer.json` from `Xenova/clip-vit-base-patch32`) | Free-text appearance search ("red top", "white bag") |
+| Moondream via [Ollama](https://ollama.com) (~1.7 GB) | `ollama pull moondream` | One-line descriptions of prominent people and keyframes |
+| RTMPose-tiny ONNX (13 MB, Apache-2.0) | `ai/models/pose/rtmpose_t_body7_256x192.onnx` (`end2end.onnx` from OpenMMLab's `rtmpose-t_simcc-body7` onnx_sdk zip) | 17 body keypoints per person: hands raised, waving, bending, sitting, lying, falls |
+
+Without them, analysis, tracking and the chat still work; the UI reports what
+is unavailable.
+
+### What analysis produces
+
+`bridge/video_analysis.py` decodes the upload at 5 fps and, per frame, runs
+YOLOX-Nano (person, car, truck, motorcycle, bicycle) and a persistent tracker
+(`bridge/tracker.py`: Kalman + IoU two-stage association, a port of the
+production BoT-SORT, plus colour-histogram re-finding). For every track it
+stores the time span, path, entry/exit, direction, approximate clothing
+colours, the clearest snapshot and a CLIP embedding, then derives events
+(busiest moment, people walking together, lingering, parked vehicles).
+
+`bridge/actions.py` adds action events. From tracker movement, measured in
+body heights per second: running, stopping after walking, one person
+following another's path. From pose keypoints (`bridge/pose.py`, people at
+least 60 px tall): both hands raised, one hand raised, waving, bending,
+sitting or crouching, lying down and possible falls. Each rule must hold for
+a minimum time, so a single bad frame never creates an event. Pose costs about
+10 ms per person on the test laptop; an 80-second 768x576 clip analyses in
+about 35 s.
+
+### How the chat answers
+
+`bridge/investigator.py` routes each question to a deterministic tool over the
+stored evidence (summary, counts, first/last, what is visible at a time, a
+person by number, appearance search, groups, lingering, vehicles, movement).
+No language model writes the answer, so it cannot invent people or times.
+Every evidence item carries `offset_ms`; clicking it seeks the video. Questions
+about identity, gender or age are declined.
+
+### Pages
+
+All pages share one id: `?recording=<id>`, optionally `&t=<seconds>&track=<n>`.
+
+| Page | Uploaded-recording mode |
+|---|---|
+| Camera Sources `/sources.html` | Upload (analysis starts automatically), progress, re-analyse, delete, links |
+| Investigator `/` | Recording-scoped chat with persisted history, video stage, clickable evidence |
+| Playback `/playback.html` | Video with track boxes, track/event timeline, appearance search |
+| Tracking `/people.html` | A card per track, replay with path overlay, events |
+
+### Local vision-model evaluation (Moondream via Ollama)
+
+Measured on the test laptop, where Ollama ran on the CPU because no NVIDIA
+driver tools were installed:
+
+| | Result |
+|---|---|
+| Speed | ~17 s per image once loaded; 12 images in ~3 min cold, ~35 s warm |
+| Large, clear person crops | Good clothing colours and carried objects ("red jacket, blue jeans, white paper bag") |
+| Small or distant crops | Unreliable; crops under 60 px are skipped |
+| Artefacts | Junk prefixes, refusals, repetition and gendered words are filtered in `bridge/vlm.py` |
+| Scene captions | Generic and partly invented details; treat as hints |
+
+Captions are labelled as model descriptions, run after the main analysis, and
+never block it. With a working NVIDIA driver, Ollama uses the GPU and is
+several times faster.
+
+### Testing
+
+```powershell
+python scripts/e2e_local.py path\to\clip.mp4
+```
+
+Uploads the clip and checks 32 behaviours across analysis, tracks, events,
+search, chat, history, pages and deletion, then deletes the test recording.
+
+### Same app with Docker (for teammates with more memory)
+
+The laptop script and Docker run the same code; pick one. Docker needs about
+4 GB of free RAM for the containers plus whatever Ollama uses.
+
+```bash
+python scripts/get_models.py                      # ~170 MB, once
+docker compose -f docker-compose.public-test.yml up -d --build
+```
+
+Open <http://localhost:8080>. The proxy routes `/api/uploads/*` to the bridge
+container; uploads, the database and track snapshots are stored in `output/`
+on the host. For captions, install Ollama on the host and run
+`ollama pull moondream`; the bridge reaches it at `host.docker.internal`
+(Windows, macOS and Linux). Check it with:
+
+```bash
+python scripts/e2e_local.py path/to/clip.mp4 --base http://localhost:8080
+docker compose -f docker-compose.public-test.yml logs -f bridge
+docker compose -f docker-compose.public-test.yml down
+```
+
+The Docker stack also starts the go2rtc gateway with one public RTSP test
+camera, so the live pages have a stream; the laptop script has no live
+cameras.
+
 ## CPU/public-test deployment and uploaded-video investigation
 
 The repository also includes a CPU-only stack for laptops without a ROCm-capable
@@ -90,8 +207,8 @@ The local workflow is:
 6. Use timestamp evidence links to seek the selected recording where supported.
 
 Uploaded recordings remain distinct from live RTSP cameras. The application
-does not pretend an uploaded file is a live stream, and the CPU detector stores
-an unknown tracking ID when persistent tracking has not been produced.
+does not pretend an uploaded file is a live stream. Track IDs are persistent
+within one recording.
 
 ### Uploaded-recording API
 
@@ -107,10 +224,16 @@ The recording workflow is served by the bridge and routed through the proxy:
 | `GET` | `/api/uploads/{id}/detections` | Read timestamped persisted detections |
 | `GET` | `/api/uploads/{id}/investigation` | Read recording-scoped chat history |
 | `POST` | `/api/uploads/{id}/investigation` | Ask an evidence-grounded question |
-| `GET` | `/api/uploads/{id}/tracking` | Read recorded observations and tracking limitations |
+| `GET` | `/api/uploads/{id}/tracking` | Read persistent tracks, events and tracking limitations |
+| `GET` | `/api/uploads/{id}/tracks` | List tracks; `/tracks/{n}` for one, `/tracks/{n}/thumb` for its snapshot |
+| `GET` | `/api/uploads/{id}/events` | Derived events and local vision-model scene captions |
+| `GET` | `/api/uploads/{id}/search?q=` | Appearance search over the recording's tracks |
+| `POST` | `/api/uploads/{id}/captions` | Re-run optional Ollama captions |
+| `DELETE` | `/api/uploads/{id}/investigation` | Clear the recording's chat history |
+| `DELETE` | `/api/uploads/{id}` | Delete the recording, its analysis and chat |
 
-The first investigation implementation is deliberately API-key-free and
-deterministic: it answers from persisted detector observations and timestamps.
+The investigation is deliberately API-key-free and deterministic: it answers
+from persisted tracks, events and timestamps (see Laptop mode above).
 It does not claim full video understanding and reports when the available
 evidence cannot establish identity, routes, colors, room semantics, or
 unobserved actions.
