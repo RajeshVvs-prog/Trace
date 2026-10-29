@@ -23,11 +23,14 @@ services:
       CCVT_LIVE_STREAMS: "1"
       CCVT_MAX_UPLOAD_BYTES: "536870912"
       VIDEO_ANALYSIS_MODEL: /models/yolox_nano.onnx
+      TRACE_MODELS_DIR: /models
+      OLLAMA_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets Linux hosts reach Ollama too
     volumes:
       - ./output:/output
       - ./ai/models:/models:ro
       - ./ai_rocm:/ai_rocm:ro
-      - ./output/public-test-ai-settings.json:/output/ai_settings.json:ro
       - ./webapp:/repo/webapp:ro
     command: ["python", "bridge.py"]
 

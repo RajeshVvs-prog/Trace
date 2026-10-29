@@ -7,7 +7,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY ch.py sqlite_store.py bridge.py video_analysis.py ./
+COPY ch.py sqlite_store.py bridge.py video_analysis.py tracker.py appearance.py vlm.py investigator.py pose.py actions.py ./
 
 EXPOSE 8081
 CMD ["python", "bridge.py"]
