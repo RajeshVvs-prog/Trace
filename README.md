@@ -11,7 +11,7 @@ the video to that moment.
 It runs on an ordinary laptop: no GPU required, no cloud, no API key, and the
 footage never leaves the machine.
 
-All code lives in [`rocm-cctv-analysis-main/`](rocm-cctv-analysis-main/).
+All code lives in [`trace-for-yukthi/`](trace-for-yukthi/).
 
 ## Two ways to run it
 
@@ -20,11 +20,11 @@ All code lives in [`rocm-cctv-analysis-main/`](rocm-cctv-analysis-main/).
 | For | Investigating uploaded recordings | A building's live cameras, 24/7 |
 | Hardware | Any recent laptop (tested: 4-core i5, 8 GB RAM) | AMD Instinct MI300X with ROCm |
 | Start | `run_local.ps1`, or Docker | Docker Compose |
-| Guide | [Laptop mode](#quick-start-laptop) below | [Full server documentation](rocm-cctv-analysis-main/README.md) |
+| Guide | [Laptop mode](#quick-start-laptop) below | [Full server documentation](trace-for-yukthi/README.md) |
 
 ## Quick start (laptop)
 
-You need Python 3.10 or newer and ffmpeg on your `PATH`. From `rocm-cctv-analysis-main/`:
+You need Python 3.10 or newer and ffmpeg on your `PATH`. From `trace-for-yukthi/`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File run_local.ps1
@@ -108,7 +108,7 @@ pose costs about 10 ms per person; Moondream takes about 17 s per image on CPU.
 With the app running:
 
 ```bash
-python rocm-cctv-analysis-main/scripts/e2e_local.py path/to/clip.mp4
+python trace-for-yukthi/scripts/e2e_local.py path/to/clip.mp4
 ```
 
 It uploads the clip and runs 37 checks across analysis, tracks, pose, events,
@@ -125,4 +125,4 @@ search, chat, history, pages and deletion, then deletes the test recording.
 ## Licence
 
 PolyForm Noncommercial License 1.0.0. See
-[`rocm-cctv-analysis-main/LICENSE.md`](rocm-cctv-analysis-main/LICENSE.md).
+[`trace-for-yukthi/LICENSE.md`](trace-for-yukthi/LICENSE.md).
