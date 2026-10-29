@@ -710,7 +710,12 @@ async function openConversation(id) {
   loadSessions();
 }
 
+// Uploaded-recording mode (recording-investigator.js) owns the chat: the live
+// investigator stays out of the way instead of racing it for the same input.
+const recordingMode = () => document.body.classList.contains("rec-mode");
+
 async function newConversation() {
+  if (recordingMode()) return;
   const d = await post("/agent/conversations", {});
   state.conv = d.id;
   showWelcome();
@@ -722,6 +727,7 @@ if (el("ctx-ring")) el("ctx-ring").onclick = () => summarizeNow(false);
 
 /* ---- sending ------------------------------------------------------------- */
 async function send(text) {
+  if (recordingMode()) return;
   text = (text || "").trim();
   if (!text || state.busy) return;
   if (!state.conv) { const d = await post("/agent/conversations", {}); state.conv = d.id; }
@@ -825,7 +831,7 @@ input.addEventListener("keydown", (e) => {
 el("compose").addEventListener("submit", (e) => { e.preventDefault(); send(input.value); });
 document.addEventListener("click", (e) => {
   const b = e.target.closest(".inv-suggest button");
-  if (b) send(b.dataset.q);
+  if (b && !recordingMode()) send(b.dataset.q);
 });
 
 /* ---- boot ---------------------------------------------------------------- */
@@ -867,7 +873,7 @@ async function loadMeta() {
   await loadMeta();
   await loadCameras();
   showDefaultEvidence();
-  await loadSessions();
+  try { await loadSessions(); } catch { /* live investigator not deployed (laptop mode) */ }
   connectDetections();
   requestAnimationFrame(drawBoxes);
   requestAnimationFrame(drawFollows);

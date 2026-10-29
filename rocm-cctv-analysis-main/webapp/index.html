@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TRACE</title>
-<link rel="stylesheet" href="css/app.css">
-<link rel="stylesheet" href="css/agent.css">
+<link rel="stylesheet" href="css/app.css?v=20261029">
+<link rel="stylesheet" href="css/agent.css?v=20261029">
 <link rel="icon" type="image/png" href="assets/logo.png">
 </head>
 <body>
@@ -28,13 +28,18 @@
             aria-expanded="true">Data &amp; Evidence <span aria-hidden="true">‹</span></button>
     <section class="inv-recording" aria-label="Uploaded recording investigation">
       <label>
-        <span>Uploaded recording</span>
+        <span>Investigate</span>
         <select id="recording-investigation">
           <option value="">Live-camera data</option>
         </select>
       </label>
       <span id="recording-investigation-status">Choose an analyzed upload to scope this chat.</span>
-      <a id="recording-investigation-playback" href="playback.html" hidden>Open in Playback</a>
+      <div class="inv-recording__links" id="recording-links" hidden>
+        <a id="recording-investigation-playback" href="playback.html">Playback</a>
+        <a id="recording-investigation-tracking" href="people.html">Tracking</a>
+        <a href="sources.html">Sources</a>
+        <button type="button" id="recording-clear">Clear chat</button>
+      </div>
     </section>
     <button class="inv-new" id="new-chat">＋ New chat</button>
     <div class="inv-sessions" id="sessions"></div>
@@ -100,10 +105,27 @@
       <button type="submit" id="send" title="Send">➤</button>
     </form>
   </section>
+
+  <!-- uploaded-recording stage: the video every chat timestamp seeks -->
+  <aside class="rec-stage" id="rec-stage" hidden aria-label="Recording player">
+    <div class="rec-stage__player">
+      <video id="rec-video" preload="auto" playsinline controls></video>
+      <canvas id="rec-anno" class="rec-stage__anno"></canvas>
+    </div>
+    <div class="rec-stage__bar">
+      <span id="rec-now">0:00</span>
+      <span id="rec-focus" class="rec-stage__focus"></span>
+      <label class="rec-stage__toggle"><input type="checkbox" id="rec-boxes" checked> boxes</label>
+    </div>
+    <div class="rec-stage__head">Evidence for the latest answer</div>
+    <div class="rec-stage__evidence" id="rec-evidence">
+      <p class="rec-stage__empty">Ask a question. Each piece of evidence jumps the video to that moment.</p>
+    </div>
+  </aside>
 </main>
 
-<script type="module" src="js/nav.js"></script>
-<script type="module" src="js/agent.js?v=20260712"></script>
-<script type="module" src="js/recording-investigator.js"></script>
+<script type="module" src="js/nav.js?v=20261029"></script>
+<script type="module" src="js/agent.js?v=20261029"></script>
+<script type="module" src="js/recording-investigator.js?v=20261029"></script>
 </body>
 </html>
