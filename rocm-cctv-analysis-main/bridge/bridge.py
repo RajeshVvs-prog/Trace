@@ -55,6 +55,17 @@ async def request_validation_error(_: Request, exc: RequestValidationError):
         content={"detail": "invalid upload request", "errors": details},
     )
 
+@app.middleware("http")
+async def no_cache_app_files(request: Request, call_next):
+    """Laptop mode serves the web app directly: make HTML/JS/CSS revalidate so
+    an edited page is never stale (the Docker proxy does the same in Caddy)."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 clients: set[WebSocket] = set()
 received = 0
 analysis_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-analysis")
@@ -94,6 +105,24 @@ def save_settings(s: dict) -> None:
     SETTINGS_PATH.write_text(json.dumps(s, indent=2))
 
 
+def _store():
+    """SQLite store for uploaded-recording analysis (the portable deployment)."""
+    if not ch.is_sqlite():
+        raise HTTPException(status_code=503, detail="uploaded-recording analysis requires CCVT_STORAGE=sqlite")
+    import sqlite_store
+    return sqlite_store
+
+
+def _meta(recording: dict) -> dict:
+    raw = recording.get("analysis_meta") or "{}"
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {}
+
+
 def _upload_response(recording: dict) -> dict:
     return {
         "id": recording["id"],
@@ -106,12 +135,18 @@ def _upload_response(recording: dict) -> dict:
         "processing_status": recording["processing_status"],
         "processing_progress": recording.get("processing_progress", 0),
         "detection_count": recording.get("detection_count", 0),
+        "track_count": recording.get("track_count", 0),
+        "analysis": _meta(recording),
         "error": recording["error"],
         "created_at": recording["created_at"],
         "updated_at": recording["updated_at"],
         "file_url": f"/api/uploads/{recording['id']}/file",
         "analysis_url": f"/api/uploads/{recording['id']}/analysis",
         "detections_url": f"/api/uploads/{recording['id']}/detections",
+        "tracks_url": f"/api/uploads/{recording['id']}/tracks",
+        "playback_url": f"/playback.html?recording={recording['id']}",
+        "investigate_url": f"/?recording={recording['id']}",
+        "tracking_url": f"/people.html?recording={recording['id']}",
     }
 
 
@@ -269,6 +304,43 @@ def _analysis_path(recording: dict) -> Path:
     return path
 
 
+def _track_dir(recording_id: str) -> Path:
+    return UPLOAD_DIR / recording_id / "tracks"
+
+
+def _set_meta(recording_id: str, **changes) -> dict:
+    recording = ch.get_recording(recording_id)
+    if not recording:                     # deleted meanwhile: nothing to update
+        return {}
+    current = _meta(recording)
+    current.update(changes)
+    ch.update_recording(recording_id, analysis_meta=json.dumps(current),
+                        updated_at=datetime.now(timezone.utc).isoformat())
+    return current
+
+
+def _run_captions(recording_id: str, path: Path, duration_s: float) -> None:
+    import vlm
+    store = _store()
+    if not vlm.available():
+        _set_meta(recording_id, captions={
+            "status": "unavailable", "model": vlm.VLM_MODEL,
+            "detail": f"no local vision model {vlm.VLM_MODEL!r} at {vlm.OLLAMA_URL}"})
+        return
+    _set_meta(recording_id, captions={"status": "processing", "model": vlm.VLM_MODEL, "progress": 0})
+
+    def progress(value: int) -> None:
+        _set_meta(recording_id, captions={"status": "processing", "model": vlm.VLM_MODEL, "progress": value})
+
+    try:
+        result = vlm.caption_recording(store, recording_id, path, _track_dir(recording_id), duration_s, progress)
+        _set_meta(recording_id, captions=result)
+        log.info("captions %s recording=%s", result["status"], recording_id)
+    except Exception as exc:
+        log.exception("captioning failed recording=%s", recording_id)
+        _set_meta(recording_id, captions={"status": "failed", "model": vlm.VLM_MODEL, "detail": str(exc)[:300]})
+
+
 def _run_analysis(recording_id: str, path: Path) -> None:
     try:
         recording = ch.get_recording(recording_id)
@@ -287,15 +359,24 @@ def _run_analysis(recording_id: str, path: Path) -> None:
             )
 
         from video_analysis import analyze
-        rows, _sampled_frames = analyze(path, recording_id, recording["recording_at"], progress)
-        ch.delete_recording_detections(recording_id)
-        count = ch.insert_recording_detections(rows)
+        started = time.time()
+        result = analyze(path, recording_id, recording["recording_at"], progress, _track_dir(recording_id))
+        result["meta"]["analysis_seconds"] = round(time.time() - started, 1)
+        store = _store()
+        store.replace_recording_analysis(recording_id, result["rows"], result["tracks"], result["events"])
         ch.update_recording(
             recording_id, status="completed", processing_status="completed",
-            processing_progress=100, detection_count=count, error="",
+            processing_progress=100, detection_count=len(result["rows"]),
+            track_count=len(result["tracks"]), analysis_meta=json.dumps(result["meta"]), error="",
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
-        log.info("video analysis completed recording=%s detections=%d", recording_id, count)
+        log.info("video analysis completed recording=%s detections=%d tracks=%d in %.1fs",
+                 recording_id, len(result["rows"]), len(result["tracks"]), result["meta"]["analysis_seconds"])
+        # captions are optional and slow on CPU: the recording is usable (and
+        # deletable) now, so release the job lock before captioning starts
+        with analysis_jobs_lock:
+            analysis_jobs.discard(recording_id)
+        _run_captions(recording_id, path, result["meta"]["duration_s"])
     except Exception as exc:
         log.exception("video analysis failed recording=%s", recording_id)
         try:
@@ -310,13 +391,26 @@ def _run_analysis(recording_id: str, path: Path) -> None:
             analysis_jobs.discard(recording_id)
 
 
-@app.post("/api/uploads/{recording_id}/analyze")
-def analyze_uploaded_recording(recording_id: str):
+def _recording_or_404(recording_id: str) -> dict:
     if not UPLOAD_ID_RE.fullmatch(recording_id):
         raise HTTPException(status_code=400, detail="bad recording id")
-    recording = ch.get_recording(recording_id)
+    try:
+        recording = ch.get_recording(recording_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     if not recording:
         raise HTTPException(status_code=404, detail="recording not found")
+    return recording
+
+
+def _require_analyzed(recording: dict) -> None:
+    if recording["processing_status"] != "completed":
+        raise HTTPException(status_code=409, detail="analyze the recording first")
+
+
+@app.post("/api/uploads/{recording_id}/analyze")
+def analyze_uploaded_recording(recording_id: str):
+    recording = _recording_or_404(recording_id)
     if recording["status"] == "processing" or recording["processing_status"] in {"queued", "processing"}:
         raise HTTPException(status_code=409, detail="recording analysis is already in progress")
     path = _analysis_path(recording)
@@ -326,10 +420,10 @@ def analyze_uploaded_recording(recording_id: str):
         analysis_jobs.add(recording_id)
     now = datetime.now(timezone.utc).isoformat()
     try:
-        ch.delete_recording_detections(recording_id)
         updated = ch.update_recording(
             recording_id, status="queued", processing_status="queued",
-            processing_progress=0, detection_count=0, error="", updated_at=now,
+            processing_progress=0, detection_count=0, track_count=0, analysis_meta="{}",
+            error="", updated_at=now,
         )
         analysis_executor.submit(_run_analysis, recording_id, path)
     except Exception:
@@ -339,169 +433,168 @@ def analyze_uploaded_recording(recording_id: str):
     return _upload_response(updated or recording)
 
 
+@app.post("/api/uploads/{recording_id}/captions")
+def recaption_uploaded_recording(recording_id: str):
+    """Re-run only the optional local vision-model captions."""
+    recording = _recording_or_404(recording_id)
+    _require_analyzed(recording)
+    path = _analysis_path(recording)
+    duration = float(_meta(recording).get("duration_s") or 0)
+    analysis_executor.submit(_run_captions, recording_id, path, duration)
+    return {"queued": True}
+
+
 @app.get("/api/uploads/{recording_id}/analysis")
 def uploaded_recording_analysis(recording_id: str):
-    if not UPLOAD_ID_RE.fullmatch(recording_id):
-        raise HTTPException(status_code=400, detail="bad recording id")
-    try:
-        recording = ch.get_recording(recording_id)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if not recording:
-        raise HTTPException(status_code=404, detail="recording not found")
-    return _upload_response(recording)
+    return _upload_response(_recording_or_404(recording_id))
+
+
+@app.delete("/api/uploads/{recording_id}")
+def delete_uploaded_recording(recording_id: str):
+    recording = _recording_or_404(recording_id)
+    with analysis_jobs_lock:
+        if recording_id in analysis_jobs:
+            raise HTTPException(status_code=409, detail="wait for analysis to finish before deleting")
+    _store().delete_recording(recording_id)
+    stored = recording.get("stored_name") or ""
+    if re.fullmatch(r"[0-9a-f]{32}\.(mp4|webm|mov)", stored):
+        (UPLOAD_DIR / stored).unlink(missing_ok=True)
+    track_dir = _track_dir(recording_id)
+    if track_dir.is_dir():
+        for item in track_dir.glob("*.jpg"):
+            item.unlink(missing_ok=True)
+        track_dir.rmdir()
+        try:
+            track_dir.parent.rmdir()
+        except OSError:
+            pass
+    return {"deleted": recording_id}
+
+
+def _detection_json(row: dict) -> dict:
+    return {
+        "timestamp_ms": row["timestamp_ms"],
+        "offset_ms": row.get("offset_ms"),
+        "frame_number": row["frame_number"],
+        "class_name": row["class_name"],
+        "confidence": row["confidence"],
+        "track_id": row["track_id"],
+        "bounding_box": {"x": row["x"], "y": row["y"], "w": row["w"], "h": row["h"]},
+        "frame": {"width": row["frame_width"], "height": row["frame_height"]},
+        "keypoints": json.loads(row["keypoints"]) if row.get("keypoints") else None,
+    }
 
 
 @app.get("/api/uploads/{recording_id}/detections")
 def uploaded_recording_detections(recording_id: str):
-    if not UPLOAD_ID_RE.fullmatch(recording_id):
-        raise HTTPException(status_code=400, detail="bad recording id")
+    _recording_or_404(recording_id)
     try:
-        recording = ch.get_recording(recording_id)
-        if not recording:
-            raise HTTPException(status_code=404, detail="recording not found")
         rows = ch.list_recording_detections(recording_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return [
-        {
-            "timestamp_ms": row["timestamp_ms"],
-            "frame_number": row["frame_number"],
-            "class_name": row["class_name"],
-            "confidence": row["confidence"],
-            "track_id": row["track_id"],
-            "bounding_box": {
-                "x": row["x"], "y": row["y"], "w": row["w"], "h": row["h"],
-            },
-            "frame": {"width": row["frame_width"], "height": row["frame_height"]},
-        }
-        for row in rows
-    ]
+    return [_detection_json(row) for row in rows]
+
+
+def _track_json(recording_id: str, track: dict) -> dict:
+    item = {k: v for k, v in track.items() if k not in {"embedding", "thumb"}}
+    item["thumb_url"] = f"/api/uploads/{recording_id}/tracks/{track['track_id']}/thumb" if track.get("thumb") else None
+    return item
+
+
+@app.get("/api/uploads/{recording_id}/tracks")
+def uploaded_recording_tracks(recording_id: str):
+    _recording_or_404(recording_id)
+    return [_track_json(recording_id, t) for t in _store().list_recording_tracks(recording_id)]
+
+
+@app.get("/api/uploads/{recording_id}/tracks/{track_id}")
+def uploaded_recording_track(recording_id: str, track_id: int):
+    _recording_or_404(recording_id)
+    store = _store()
+    track = store.get_recording_track(recording_id, track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="track not found")
+    item = _track_json(recording_id, track)
+    item["events"] = [e for e in store.list_recording_events(recording_id) if track_id in e["track_ids"]]
+    return item
+
+
+@app.get("/api/uploads/{recording_id}/tracks/{track_id}/thumb")
+def uploaded_recording_track_thumb(recording_id: str, track_id: int):
+    _recording_or_404(recording_id)
+    track = _store().get_recording_track(recording_id, track_id)
+    if not track or not track.get("thumb") or not re.fullmatch(r"\d+\.jpg", track["thumb"]):
+        raise HTTPException(status_code=404, detail="thumbnail not found")
+    path = _track_dir(recording_id) / track["thumb"]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="thumbnail not found")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.get("/api/uploads/{recording_id}/events")
+def uploaded_recording_events(recording_id: str):
+    _recording_or_404(recording_id)
+    store = _store()
+    return {"events": store.list_recording_events(recording_id),
+            "captions": store.list_recording_captions(recording_id)}
 
 
 @app.get("/api/uploads/{recording_id}/tracking")
 def uploaded_recording_tracking(recording_id: str):
-    if not UPLOAD_ID_RE.fullmatch(recording_id):
-        raise HTTPException(status_code=400, detail="bad recording id")
-    recording = ch.get_recording(recording_id)
-    if not recording:
-        raise HTTPException(status_code=404, detail="recording not found")
-    rows = ch.list_recording_detections(recording_id)
+    recording = _recording_or_404(recording_id)
+    store = _store()
     return {
         "recording": _upload_response(recording),
-        "persistent_tracking_supported": False,
-        "limitation": "Uploaded-video analysis stores track_id as unknown; detections are observations, not persistent tracks.",
-        "detections": [
-            {
-                "timestamp_ms": row["timestamp_ms"],
-                "class_name": row["class_name"],
-                "confidence": row["confidence"],
-                "track_id": row["track_id"],
-                "bounding_box": {"x": row["x"], "y": row["y"], "w": row["w"], "h": row["h"]},
-            }
-            for row in rows
-        ],
+        "persistent_tracking_supported": True,
+        "limitation": ("Track IDs are consistent within this recording only. A person who leaves view or is "
+                       "hidden for more than about 6 seconds may receive a new ID; there is no face recognition."),
+        "tracks": [_track_json(recording_id, t) for t in store.list_recording_tracks(recording_id)],
+        "events": store.list_recording_events(recording_id),
     }
 
 
-def _recording_evidence(recording_id: str, detections: list[dict]) -> list[dict]:
-    evidence = []
-    seen = set()
-    for row in detections:
-        timestamp_ms = int(row["timestamp_ms"])
-        key = (timestamp_ms, row["class_name"])
-        if key in seen:
-            continue
-        seen.add(key)
-        evidence.append({
-            "timestamp_ms": timestamp_ms,
-            "class_name": row["class_name"],
-            "confidence": round(float(row["confidence"]), 3),
-            "url": f"/api/uploads/{recording_id}/file#t={timestamp_ms / 1000:.3f}",
-        })
-    return evidence[:40]
+def _answerer(recording: dict):
+    from investigator import Answerer
+    store = _store()
+    rec = dict(recording)
+    rec["analysis_meta"] = _meta(recording)
+    return Answerer(rec, store.list_recording_tracks(recording["id"], with_embedding=True),
+                    store.list_recording_events(recording["id"]),
+                    store.list_recording_captions(recording["id"]),
+                    ch.list_recording_detections(recording["id"]))
 
 
-def _investigation_answer(recording_id: str, question: str) -> tuple[str, list[dict]]:
-    detections = ch.list_recording_detections(recording_id)
-    lower = question.lower()
-    evidence = _recording_evidence(recording_id, detections)
-    person_rows = [row for row in detections if row["class_name"] == "person"]
-    if not detections:
-        return (
-            "I could not establish an event from the persisted analysis. "
-            "This recording has no supported-object detections, so I cannot "
-            "claim that a person or event was present. The detector does not "
-            "provide a complete description of every frame.",
-            [],
-        )
-    if "first" in lower and ("person" in lower or "people" in lower):
-        rows = person_rows
-        if not rows:
-            return "No person detection is persisted for this recording; I cannot determine when a person first appears.", []
-        first = min(rows, key=lambda row: row["timestamp_ms"])
-        return (
-            f"The first persisted person detection is at {datetime.fromtimestamp(first['timestamp_ms'] / 1000, timezone.utc).isoformat()} UTC "
-            f"({first['confidence']:.0%} confidence). This is a detector observation, not proof of identity or continuous presence.",
-            _recording_evidence(recording_id, [first]),
-        )
-    if "where" in lower and ("person" in lower or "people" in lower):
-        if not person_rows:
-            return "No person detection is persisted, so I cannot report where a person was seen.", []
-        points = []
-        for row in person_rows[:12]:
-            points.append(
-                f"{datetime.fromtimestamp(row['timestamp_ms'] / 1000, timezone.utc).isoformat()} UTC "
-                f"at normalized box ({row['x']:.2f}, {row['y']:.2f}, {row['w']:.2f}, {row['h']:.2f})"
-            )
-        return (
-            "Persisted person observations are available at these image coordinates: "
-            + "; ".join(points)
-            + ". Physical room locations and identity cannot be established from this data.",
-            _recording_evidence(recording_id, person_rows[:12]),
-        )
-    if "after" in lower or "what happens" in lower or "route" in lower or "went" in lower:
-        return (
-            "I cannot establish that sequence. Tracking IDs are unavailable for uploaded-video detections, "
-            "and the persisted results do not prove identity, entry/exit, or movement between locations.",
-            evidence[:8],
-        )
-    if "summar" in lower or "important" in lower or "event" in lower:
-        counts = collections.Counter(row["class_name"] for row in detections)
-        summary = ", ".join(f"{count} {name} observation(s)" for name, count in counts.items())
-        return (
-            f"The persisted detector evidence contains {len(detections)} observations: {summary}. "
-            "These are sampled object detections, not a complete narrative of the recording; "
-            "no event outside these observations can be asserted.",
-            evidence[:12],
-        )
-    return (
-        "I can answer questions about persisted supported-object detections and their timestamps. "
-        "I cannot reliably infer identities, physical locations, routes, or unobserved events from the current analysis.",
-        evidence[:8],
-    )
+@app.get("/api/uploads/{recording_id}/search")
+def uploaded_recording_search(recording_id: str, q: str = ""):
+    """Appearance search ("red top", "white van") over this recording's tracks."""
+    recording = _recording_or_404(recording_id)
+    _require_analyzed(recording)
+    q = q.strip()[:200].lower()
+    if not q:
+        raise HTTPException(status_code=400, detail="q is required")
+    text, evidence = _answerer(recording).appearance(q, set(re.findall(r"[a-z0-9\-]+", q)))
+    return {"query": q, "answer": text, "results": evidence}
 
 
 @app.get("/api/uploads/{recording_id}/investigation")
 def recording_investigation_history(recording_id: str):
-    if not UPLOAD_ID_RE.fullmatch(recording_id):
-        raise HTTPException(status_code=400, detail="bad recording id")
-    recording = ch.get_recording(recording_id)
-    if not recording:
-        raise HTTPException(status_code=404, detail="recording not found")
+    recording = _recording_or_404(recording_id)
     return {
         "recording": _upload_response(recording),
         "messages": ch.list_recording_chat_messages(recording_id),
     }
 
 
+@app.delete("/api/uploads/{recording_id}/investigation")
+def clear_recording_investigation(recording_id: str):
+    _recording_or_404(recording_id)
+    _store().clear_recording_chat(recording_id)
+    return {"cleared": recording_id}
+
+
 @app.post("/api/uploads/{recording_id}/investigation")
 async def ask_recording_investigation(recording_id: str, request: Request):
-    if not UPLOAD_ID_RE.fullmatch(recording_id):
-        raise HTTPException(status_code=400, detail="bad recording id")
-    recording = ch.get_recording(recording_id)
-    if not recording:
-        raise HTTPException(status_code=404, detail="recording not found")
+    recording = _recording_or_404(recording_id)
     try:
         payload = await request.json()
     except ValueError as exc:
@@ -509,10 +602,9 @@ async def ask_recording_investigation(recording_id: str, request: Request):
     question = str(payload.get("message", "")).strip()
     if not 1 <= len(question) <= 2000:
         raise HTTPException(status_code=400, detail="message is required and must be at most 2000 characters")
-    if recording["processing_status"] != "completed":
-        raise HTTPException(status_code=409, detail="analyze the recording before starting an investigation")
+    _require_analyzed(recording)
     try:
-        answer, evidence = _investigation_answer(recording_id, question)
+        answer, evidence = _answerer(recording).answer(question)
         now = datetime.now(timezone.utc).isoformat()
         ch.add_recording_chat_message(recording_id, "user", question, [], now)
         assistant = ch.add_recording_chat_message(recording_id, "assistant", answer, evidence, now)
@@ -545,6 +637,11 @@ def _person_shaped_pet(r: dict) -> bool:
 
 
 ch.wait_ready()
+if ch.is_sqlite():
+    import sqlite_store as _recovery
+    _recovered = _recovery.recover_interrupted_jobs()
+    if _recovered:
+        log.warning("marked %d interrupted upload job(s) after restart", _recovered)
 
 
 @app.post("/ingest")
@@ -1736,6 +1833,16 @@ def stats(hours: int = 24):
         "total": sum(totals.values()),
         "last_hour": last_hour,
     }
+
+
+# Laptop mode: serve a camera config with no NVRs so pages do not try to open
+# live streams that do not exist (set by run_local.ps1).
+WEB_CONFIG_OVERRIDE = os.environ.get("TRACE_WEB_CONFIG", "")
+if WEB_CONFIG_OVERRIDE and Path(WEB_CONFIG_OVERRIDE).is_file():
+    @app.get("/config.json")
+    def local_web_config():
+        return FileResponse(WEB_CONFIG_OVERRIDE, media_type="application/json",
+                            headers={"Cache-Control": "no-store"})
 
 
 if WEBAPP_DIR.is_dir():
