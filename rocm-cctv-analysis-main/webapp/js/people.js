@@ -9,37 +9,7 @@ const cropURL = (p) => `/api/reid/reid/crop?p=${encodeURIComponent(p)}`;
 const snapURL = (p) => `/api/reid/behavior/snapshot?p=${encodeURIComponent(p)}`;
 const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const state = { persons: [], filter: new Set(), cameras: [] };
-const uploadedTrackingSelect = document.getElementById("uploaded-tracking-recording");
-const uploadedTrackingStatus = document.getElementById("uploaded-tracking-status");
-
-async function loadUploadedTracking() {
-  try {
-    const recordings = await (await fetch("/api/uploads", { cache: "no-store" })).json();
-    recordings.forEach((recording) => uploadedTrackingSelect.appendChild(new Option(
-      `${recording.original_name} · ${recording.processing_status}`, recording.id,
-    )));
-  } catch {
-    uploadedTrackingStatus.textContent = "Uploaded recordings unavailable";
-  }
-}
-
-uploadedTrackingSelect.addEventListener("change", async () => {
-  if (!uploadedTrackingSelect.value) {
-    uploadedTrackingStatus.textContent = "Recorded uploads do not have persistent track IDs.";
-    return;
-  }
-  try {
-    const result = await (await fetch(
-      `/api/uploads/${encodeURIComponent(uploadedTrackingSelect.value)}/tracking`,
-    )).json();
-    uploadedTrackingStatus.textContent =
-      `${result.detections.length} persisted observations. ${result.limitation}`;
-  } catch {
-    uploadedTrackingStatus.textContent = "Recorded tracking evidence unavailable";
-  }
-});
-
-loadUploadedTracking();
+// Uploaded recordings are handled by tracking-upload.js (body.trk-upload).
 
 /* Tags come from the VLM as six fixed fields. `mode` is measured from the pixels,
  * not asked for: an infrared night crop carries no colour at all. */

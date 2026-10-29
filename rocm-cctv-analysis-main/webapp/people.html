@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tracking</title>
-<link rel="stylesheet" href="css/app.css">
-<link rel="stylesheet" href="css/people.css">
+<link rel="stylesheet" href="css/app.css?v=20261029">
+<link rel="stylesheet" href="css/people.css?v=20261029">
 <link rel="icon" type="image/png" href="assets/logo.png">
 </head>
 <body class="trk-body">
@@ -69,15 +69,17 @@
       <span class="ppl-stat" id="vstat"></span>
     </div>
   </div>
-  <div class="trk-controls">
-    <label>Uploaded recording
+  <div class="trk-controls trk-upload-controls">
+    <label class="trk-upload-pick">Uploaded recording
       <select id="uploaded-tracking-recording">
         <option value="">Live tracking only</option>
       </select>
     </label>
-    <span id="uploaded-tracking-status" class="ppl-stat">
-      Recorded uploads do not have persistent track IDs.
-    </span>
+    <div class="trk-filterbar">
+      <input id="upl-q" type="search" class="trk-vsearch" placeholder="filter: colour, direction, track number…">
+      <span class="trk-spacer"></span>
+      <span id="uploaded-tracking-status" class="ppl-stat"></span>
+    </div>
   </div>
 </nav>
 
@@ -85,6 +87,10 @@
   <section class="trk-results">
     <div class="ppl-list" id="list"></div>
     <div class="veh-list" id="vlist" hidden></div>
+  </section>
+  <section class="trk-results upl-results" id="upl-results" hidden>
+    <div class="upl-summary" id="upl-summary"></div>
+    <div class="upl-list" id="upl-list"></div>
   </section>
 
   <aside class="trk-detail" id="detail">
@@ -102,7 +108,8 @@
   </aside>
 </main>
 
-<script type="module" src="js/nav.js"></script>
-<script type="module" src="js/people.js"></script>
+<script type="module" src="js/nav.js?v=20261029"></script>
+<script type="module" src="js/people.js?v=20261029"></script>
+<script type="module" src="js/tracking-upload.js?v=20261029"></script>
 </body>
 </html>
