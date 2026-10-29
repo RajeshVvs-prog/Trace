@@ -40,3 +40,10 @@ FUJI_memory.md
 SYSTEM_ARCHITECTURE.md
 WEBAPP_ARCH.md
 14_TOOLS_DETAIL.md
+
+# laptop mode
+.venv/
+output/
+ai/models/clip/
+ai/models/yolox_nano.onnx
+ai/models/pose/

@@ -1,0 +1,8 @@
+{
+  "classes": ["person", "car", "truck", "motorcycle", "bicycle"],
+  "model": "yolox-nano",
+  "aspect": "native",
+  "nvrs": [],
+  "extra_cameras": [],
+  "mode": "local"
+}
