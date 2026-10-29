@@ -48,6 +48,7 @@ function createField(label, type, value, required, className) {
     ? document.createElement("textarea")
     : document.createElement("input");
   if (type !== "textarea") input.type = type;
+  if (type === "date") { input.min = "1990-01-01"; input.max = "2099-12-31"; }   // keeps the year to 4 digits
   input.value = value;
   input.required = required;
   input.maxLength = type === "textarea" ? 500 : 100;
@@ -249,6 +250,9 @@ async function uploadSelected() {
     if (!metadata || !metadata.cameraName || !metadata.date || !metadata.time) {
       entry.error = "Camera name, recording date and recording time are required.";
       invalid.push(entry);
+    } else if (!/^(19|20)\d{2}-\d{2}-\d{2}$/.test(metadata.date) || Number.isNaN(Date.parse(`${metadata.date}T${metadata.time}`))) {
+      entry.error = "Recording date looks wrong. Use a real date with a four-digit year, for example 22-02-2026.";
+      invalid.push(entry);
     } else if (entry.file.size > MAX_UPLOAD_BYTES) {
       entry.error = "File exceeds the 512 MB upload limit.";
       invalid.push(entry);
@@ -279,8 +283,12 @@ async function uploadSelected() {
     entry.progress = 0;
     renderFiles();
     try {
-      await uploadRequest(entry, metadata);
+      const saved = await uploadRequest(entry, metadata);
       entry.status = "uploaded";
+      if (saved && saved.id) {
+        try { await fetchWithTimeout(`/api/uploads/${saved.id}/analyze`, { method: "POST" }); }
+        catch { /* the card's Analyze button stays available */ }
+      }
       entry.progress = 100;
     } catch (error) {
       entry.status = "failed";
@@ -303,7 +311,7 @@ async function uploadSelected() {
   if (!refreshFailed) {
     setMessage(fileMessage, failed
       ? "Some recordings failed. Review the file status and try again."
-      : "Recordings uploaded. Uploaded — not analyzed yet.", failed ? "error" : "warning");
+      : "Recordings uploaded. Analysis has started; progress is shown below.", failed ? "error" : "success");
   }
 }
 
@@ -349,7 +357,9 @@ function renderRecording(recording) {
   const statusText = recording.processing_status === "not_processed"
     ? "Uploaded — not analyzed yet"
     : recording.processing_status === "completed"
-      ? `Analysis completed · ${recording.detection_count || 0} detections`
+      ? `Analysis completed · ${recording.track_count || 0} tracks · ${recording.detection_count || 0} detections${
+        recording.analysis?.captions?.status === "completed" ? " · captions ready"
+        : recording.analysis?.captions?.status === "processing" ? ` · captioning ${recording.analysis.captions.progress || 0}%` : ""}`
       : recording.processing_status === "failed"
         ? "Analysis failed"
         : `${recording.processing_status} · ${recording.processing_progress || 0}%`;
@@ -360,15 +370,40 @@ function renderRecording(recording) {
   const action = document.createElement("button");
   action.type = "button";
   action.className = "btn-secondary registered-item__analyze";
-  action.textContent = recording.processing_status === "failed" ? "Retry analysis" : "Analyze video";
+  action.textContent = recording.processing_status === "failed" ? "Retry analysis"
+    : recording.processing_status === "completed" ? "Re-analyze" : "Analyze video";
   action.disabled = ["queued", "processing"].includes(recording.processing_status);
   action.addEventListener("click", () => startAnalysis(recording.id, action));
-  item.append(action);
-  const investigate = document.createElement("a");
-  investigate.className = "btn-secondary registered-item__analyze";
-  investigate.href = `investigation.html?id=${encodeURIComponent(recording.id)}`;
-  investigate.textContent = "Investigate";
-  item.append(investigate);
+  const actions = document.createElement("div");
+  actions.className = "registered-item__actions";
+  actions.append(action);
+  item.append(actions);
+  if (recording.processing_status === "completed") {
+    for (const [label, href] of [["Investigate", recording.investigate_url], ["Playback", recording.playback_url],
+      ["Tracking", recording.tracking_url]]) {
+      const link = document.createElement("a");
+      link.className = "btn-secondary registered-item__analyze";
+      link.href = href;
+      link.textContent = label;
+      actions.append(link);
+    }
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "btn-secondary registered-item__analyze registered-item__delete";
+  remove.textContent = "Delete";
+  remove.disabled = ["queued", "processing"].includes(recording.processing_status);
+  remove.addEventListener("click", async () => {
+    if (!confirm(`Delete ${recording.original_name} and all of its analysis and chat history?`)) return;
+    try {
+      const response = await fetchWithTimeout(`/api/uploads/${recording.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+      await refreshRecordings();
+    } catch (error) {
+      setMessage(fileMessage, `Delete failed: ${error.message}`, "error");
+    }
+  });
+  actions.append(remove);
   if (["queued", "processing"].includes(recording.processing_status)) {
     const progress = document.createElement("progress");
     progress.className = "registered-item__progress";
@@ -409,39 +444,33 @@ async function startAnalysis(recordingId, action) {
 
 async function loadRecordingDetections(recordingId, item) {
   try {
-    const response = await fetchWithTimeout(`/api/uploads/${recordingId}/detections`);
-    const detections = await response.json();
-    if (!response.ok) throw new Error(detections.detail || "detections unavailable");
+    const response = await fetchWithTimeout(`/api/uploads/${recordingId}/tracks`);
+    const tracks = await response.json();
+    if (!response.ok) throw new Error(tracks.detail || "tracks unavailable");
     const section = document.createElement("div");
     section.className = "recording-detections";
+    const counts = {};
+    tracks.forEach((t) => { counts[t.class_name] = (counts[t.class_name] || 0) + 1; });
     const heading = document.createElement("strong");
-    heading.textContent = `Detections (${detections.length})`;
+    heading.textContent = tracks.length
+      ? `Tracked: ${Object.entries(counts).map(([name, n]) => `${n} ${name}${n > 1 ? "s" : ""}`).join(", ")}`
+      : "No supported objects were tracked.";
     section.append(heading);
-    if (detections.length) {
-      const table = document.createElement("table");
-      table.className = "recording-detections__table";
-      table.innerHTML = "<thead><tr><th>Timestamp</th><th>Object</th><th>Confidence</th><th>Track</th></tr></thead>";
-      const body = document.createElement("tbody");
-      detections.forEach((detection) => {
-        const row = document.createElement("tr");
-        const timestamp = new Date(detection.timestamp_ms).toLocaleString();
-        row.innerHTML = `<td>${timestamp}</td><td>${detection.class_name}</td>` +
-          `<td>${(Number(detection.confidence) * 100).toFixed(1)}%</td>` +
-          `<td>${detection.track_id == null ? "Unknown" : detection.track_id}</td>`;
-        body.append(row);
-      });
-      table.append(body);
-      section.append(table);
-    } else {
-      const empty = document.createElement("span");
-      empty.textContent = "No supported objects were detected.";
-      section.append(empty);
-    }
+    const strip = document.createElement("div");
+    strip.className = "recording-detections__strip";
+    tracks.filter((t) => t.thumb_url).slice(0, 14).forEach((t) => {
+      const link = document.createElement("a");
+      link.href = `/people.html?recording=${encodeURIComponent(recordingId)}&track=${t.track_id}`;
+      link.title = `${t.class_name} ${t.track_id}`;
+      link.innerHTML = `<img src="${t.thumb_url}" alt="${t.class_name} ${t.track_id}" loading="lazy">`;
+      strip.append(link);
+    });
+    section.append(strip);
     item.append(section);
   } catch (error) {
     const errorMessage = document.createElement("p");
     errorMessage.className = "registered-item__error";
-    errorMessage.textContent = `Detections unavailable: ${error.message}`;
+    errorMessage.textContent = `Analysis results unavailable: ${error.message}`;
     item.append(errorMessage);
   }
 }
@@ -459,6 +488,8 @@ async function refreshRecordings() {
   }
   if (!Array.isArray(payload)) throw new Error("recordings response was invalid");
   if (payload.length === 0) {
+    recordingSources.classList.add("empty-state");
+    recordingSources.classList.remove("registered-list");
     recordingSources.replaceChildren(
       Object.assign(document.createElement("span"), { className: "empty-state__mark", textContent: "—" }),
       Object.assign(document.createElement("strong"), { textContent: "No uploaded recordings" }),
@@ -466,9 +497,12 @@ async function refreshRecordings() {
     );
     return;
   }
+  recordingSources.classList.remove("empty-state");
+  recordingSources.classList.add("registered-list");
   recordingSources.replaceChildren();
   payload.forEach((recording) => recordingSources.append(renderRecording(recording)));
-  payload.filter((recording) => ["queued", "processing"].includes(recording.processing_status))
+  payload.filter((recording) => ["queued", "processing"].includes(recording.processing_status)
+    || recording.analysis?.captions?.status === "processing")
     .forEach((recording) => {
       setTimeout(async () => {
         try {
@@ -484,10 +518,15 @@ async function refreshRecordings() {
         } catch (error) {
           setMessage(fileMessage, `Analysis status unavailable: ${error.message}`, "error");
         }
-      }, 1000);
+      }, 2000);
     });
 }
 
-refreshRecordings().catch((error) => {
+refreshRecordings().then(() => {
+  // laptop mode has no live sources: open on the uploads people actually use
+  if (recordingSources.classList.contains("registered-list")) {
+    selectSourceTab(recordingTab, recordingSources, liveTab, liveSources);
+  }
+}).catch((error) => {
   setMessage(fileMessage, `Uploaded recordings are unavailable: ${error.message}`, "error");
 });

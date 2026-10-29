@@ -478,3 +478,14 @@ white-space: pre-wrap;
   .source-tabs { padding-left: 13px; padding-right: 13px; overflow-x: auto; }
   .selected-files-summary { align-items: stretch; flex-direction: column; }
 }
+
+.recording-detections__strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.recording-detections__strip img { width: 40px; height: 54px; object-fit: cover; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--surface-2); display: block; }
+.recording-detections__strip a:hover img { border-color: var(--accent); }
+.registered-item__delete:hover:not(:disabled) { border-color: var(--err); color: var(--err); }
+.registered-item__actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.registered-item__actions .registered-item__analyze { justify-self: auto; text-decoration: none; }
+.registered-list { display: grid; gap: 10px; padding: 12px; text-align: left; }
+.registered-list[hidden] { display: none; }
+.empty-state[hidden] { display: none; }

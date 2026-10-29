@@ -126,8 +126,8 @@ async function loadHomeRecordings() {
       actions.className = "home-recording__actions";
       const investigate = document.createElement("a");
       investigate.href = r.id || r.recording_id
-        ? `/investigation.html?id=${encodeURIComponent(r.id || r.recording_id)}`
-        : "/investigation.html";
+        ? `/index.html?recording=${encodeURIComponent(r.id || r.recording_id)}`
+        : "/index.html";
       investigate.textContent = "Investigate";
       const playback = document.createElement("a");
       playback.href = "/playback.html";
