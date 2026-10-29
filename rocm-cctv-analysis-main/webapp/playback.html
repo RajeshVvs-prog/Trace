@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Playback</title>
-<link rel="stylesheet" href="css/app.css">
-<link rel="stylesheet" href="css/playback.css">
+<link rel="stylesheet" href="css/app.css?v=20261029">
+<link rel="stylesheet" href="css/playback.css?v=20261029">
 <link rel="icon" type="image/png" href="assets/logo.png">
 </head>
 <body class="pb-body">
@@ -72,6 +72,26 @@
         check the surrounding cameras before giving a verdict.
       </div>
     </div>
+    <div class="pbu-panel" id="pbu-panel" hidden>
+      <div class="pbu-head">
+        <strong id="pbu-title">Uploaded recording</strong>
+        <span id="pbu-meta"></span>
+        <span class="pbu-links">
+          <a id="pbu-investigate" href="index.html">Investigate</a>
+          <a id="pbu-tracking" href="people.html">Tracking</a>
+          <a href="sources.html">Sources</a>
+        </span>
+      </div>
+      <form class="pbu-search" id="pbu-search-form">
+        <input id="pbu-search" autocomplete="off" placeholder="Find by appearance: “red top”, “white bag”, “white van”">
+        <button type="submit" aria-label="search">🔍</button>
+      </form>
+      <div class="pbu-results" id="pbu-results"></div>
+      <div class="pbu-section">Events</div>
+      <div class="pbu-list" id="pbu-events"></div>
+      <div class="pbu-section">Tracked objects</div>
+      <div class="pbu-list" id="pbu-tracks"></div>
+    </div>
     <form class="pb-search" id="pb-search-form">
       <input id="pb-search" autocomplete="off"
              placeholder="Search — “a dog” · or across all: “which camera has a parcel”">
@@ -91,6 +111,9 @@
       <button id="pb-zoom-in" title="zoom in">+</button>
     </span>
   </div>
+  <div class="pbu-tl" id="pbu-tl-wrap" hidden>
+    <canvas id="pbu-tl"></canvas>
+  </div>
   <div class="pb-tl-scroll" id="pb-tl-scroll">
     <canvas id="pb-tl"></canvas>
   </div>
@@ -102,7 +125,8 @@
   <span class="statusbar__right">recorder · 60s segments · H.264 copy</span>
 </footer>
 
-<script type="module" src="js/nav.js"></script>
-<script type="module" src="js/playback.js"></script>
+<script type="module" src="js/nav.js?v=20261029"></script>
+<script type="module" src="js/playback.js?v=20261029"></script>
+<script type="module" src="js/playback-upload.js?v=20261029"></script>
 </body>
 </html>

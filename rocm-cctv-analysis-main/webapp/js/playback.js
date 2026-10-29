@@ -5,7 +5,9 @@ import { iouDedupe } from "./boxes.js";
 
 const camSel = document.getElementById("camera");
 const dateSel = document.getElementById("date");
-const uploadedSel = document.getElementById("uploaded-recording");
+// Uploaded recordings: playback-upload.js puts <body> in "pb-upload" mode and
+// owns the player; everything below stands down while it does.
+const uploadMode = () => document.body.classList.contains("pb-upload");
 const player = document.getElementById("player");
 const emptyEl = document.getElementById("empty");
 const playingEl = document.getElementById("playing");
@@ -32,7 +34,6 @@ let aspect = "16:9";
 let dets = [];           // detections for the current segment
 let aiOn = true;
 let pbThr = 0.30;
-let uploadedRecording = null;
 // Delay applied to every detection so it lines up with the buffered video.
 // Set on the Settings page ("Playback box sync"), shared by every playback view
 // via localStorage. A moving object's box lagging behind it -> raise; ahead -> lower.
@@ -75,7 +76,6 @@ aiBtn.addEventListener("click", () => {
 
 /* ---- init ---- */
 async function init() {
-  await loadUploadedRecordings();
   const cfg = await (await fetch("config.json")).json();
   aspect = cfg.aspect || "16:9";
   document.body.dataset.aspect = aspect;
@@ -90,12 +90,12 @@ async function init() {
     }
   }
   camSel.addEventListener("change", () => { announceCamera(); loadDates(); });
-  uploadedSel.addEventListener("change", selectUploadedRecording);
   dateSel.addEventListener("change", loadSegments);
-  player.addEventListener("ended", () => playIndex(currentIdx + 1));
-  player.addEventListener("pause", () => { playBtn.textContent = "▶"; onPause(); });
+  player.addEventListener("ended", () => { if (!uploadMode()) playIndex(currentIdx + 1); });
+  player.addEventListener("pause", () => { playBtn.textContent = "▶"; if (!uploadMode()) onPause(); });
   player.addEventListener("play", () => { playBtn.textContent = "❚❚"; });
   playBtn.addEventListener("click", () => {
+    if (uploadMode()) { player.paused ? player.play().catch(() => {}) : player.pause(); return; }
     if (currentIdx < 0) { seekToTime(segments.length ? segEpochMs(dateSel.value, segments[0].time) : 0); return; }
     player.paused ? player.play().catch(() => {}) : player.pause();
   });
@@ -106,51 +106,7 @@ async function init() {
   document.getElementById("pb-zoom-out").addEventListener("click", () => setZoom(pxPerHour / 1.6));
   window.addEventListener("resize", drawTimeline);
   requestAnimationFrame(tlLoop);
-  await loadDates();
-  announceCamera();
-  const requested = new URLSearchParams(location.search).get("recording");
-  if (requested && [...uploadedSel.options].some((option) => option.value === requested)) {
-    uploadedSel.value = requested;
-    selectUploadedRecording();
-  }
-}
-
-async function loadUploadedRecordings() {
-  try {
-    const response = await fetch("/api/uploads", { cache: "no-store" });
-    if (!response.ok) throw new Error("uploaded recordings unavailable");
-    const recordings = await response.json();
-    recordings.forEach((recording) => {
-      const option = new Option(
-        `${recording.original_name} · ${recording.processing_status}`,
-        recording.id,
-      );
-      uploadedSel.appendChild(option);
-    });
-  } catch {
-    uploadedSel.appendChild(new Option("Uploaded recordings unavailable", ""));
-  }
-}
-
-function selectUploadedRecording() {
-  const recording = uploadedSel.value
-    ? [...uploadedSel.options].find((option) => option.value === uploadedSel.value)
-    : null;
-  if (!recording) {
-    uploadedRecording = null;
-    return;
-  }
-  uploadedRecording = recording;
-  camSel.disabled = true;
-  dateSel.disabled = true;
-  stopPlayer();
-  player.src = `/api/uploads/${encodeURIComponent(recording.value)}/file`;
-  player.load();
-  emptyEl.hidden = true;
-  statusBar.textContent = `uploaded recording · ${recording.textContent}`;
-  statusFoot.textContent = statusBar.textContent;
-  segCount.textContent = "uploaded file";
-  player.play().catch(() => {});
+  if (camSel.value) { await loadDates(); announceCamera(); }
 }
 
 /* When the operator picks a camera, tell them in the review panel WHAT they are
@@ -177,6 +133,7 @@ async function announceCamera() {
 
 /* ---- data ---- */
 async function loadDates() {
+  if (!camSel.value) return;
   const dates = await (await fetch(`/api/recordings/${camSel.value}/dates`)).json();
   dateSel.innerHTML = "";
   if (!dates.length) {
@@ -214,6 +171,7 @@ const timeToX = (tMs, W) => ((tMs - dayStart) / DAY_MS) * W;
 const xToTime = (x, W) => dayStart + (x / W) * DAY_MS;
 
 function drawTimeline() {
+  if (uploadMode()) return;
   const W = timelineWidth();
   tlCanvas.style.width = W + "px";
   const H = tlCanvas.clientHeight || 62;
@@ -310,11 +268,13 @@ function seekToTime(tMs) {
 }
 
 function onTimelineClick(e) {
+  if (uploadMode()) return;
   const r = tlCanvas.getBoundingClientRect();
   seekToTime(xToTime(e.clientX - r.left, r.width));
 }
 
 function onTimelineHover(e) {
+  if (uploadMode()) return;
   const r = tlCanvas.getBoundingClientRect();
   const t = xToTime(e.clientX - r.left, r.width);
   const mk = Math.floor(t / 1000 / 60) * 60;
@@ -387,7 +347,7 @@ function videoRect() {
 
 function drawFrame() {
   requestAnimationFrame(drawFrame);
-  if (!aiOn || !dets.length || (player.paused && !player.currentTime)) return;
+  if (uploadMode() || !aiOn || !dets.length || (player.paused && !player.currentTime)) return;
   anno.width = anno.clientWidth; anno.height = anno.clientHeight;
   const ctx = anno.getContext("2d");
   ctx.clearRect(0, 0, anno.width, anno.height);
@@ -487,6 +447,7 @@ const searchForm = document.getElementById("pb-search-form");
 const searchInput = document.getElementById("pb-search");
 searchForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (uploadMode()) return;
   let q = searchInput.value.trim();
   if (!q || !dateSel.value) return;
   searchInput.value = "";
